@@ -18,8 +18,6 @@ function ESC-1 {
         "519"  # Enterprise Admins SID
     )
 
-    $SANBit = 0x40 # Hex de SAN
-
     $TargetEKUs = @(
         '1.3.6.1.5.5.7.3.0',  # Any Purpose
         '1.3.6.1.5.5.7.3.2'   # Client Authentication
@@ -44,8 +42,8 @@ function ESC-1 {
         if (-not $name) { $name = $template.Name }
 
         # Verifica no templates se o SAN está habilitado
-        $SANFlag = [int]$template."msPKI-Certificate-Name-Flag"[0]
-        $HasSAN = (($SANFlag -band $SANBit) -ne 0)
+        $NameFlags = [int]$template.'msPKI-Certificate-Name-Flag'[0]
+        $HasSAN = ($NameFlags -band 1) -ne 0 -or ($NameFlags -band 2) -ne 0 -or ($NameFlags -band 4) -ne 0
 
         # Verifica EKUs especificos em cada template
         $EKUs = $template.'pKIExtendedKeyUsage'
