@@ -15,6 +15,7 @@ function ESC-1 {
     $AllowedRIDs = @(
         "18",  # SYSTEM SID
         "512", # Domain Admins SID
+        "500", # Administrator
         "519"  # Enterprise Admins SID
     )
 
