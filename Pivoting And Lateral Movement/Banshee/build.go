@@ -19,6 +19,9 @@ func runCmd(name string, args ...string) {
 }
 
 func main() {
+	fmt.Println("[*] Verificando e baixando dependências...")
+	runCmd("go", "mod", "download")
+
 	fmt.Println("[*] Limpando diretório bin/...")
 	_ = os.RemoveAll("bin")
 	err := os.MkdirAll("bin", 0755)
