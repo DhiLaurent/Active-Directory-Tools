@@ -16,8 +16,10 @@ import (
         "net"
         "os"
         "os/exec"
+        "os/signal"
         "strings"
         "sync"
+        "syscall"
         "time"
 
         "github.com/hashicorp/yamux"
@@ -25,13 +27,16 @@ import (
 )
 
 type AgentSession struct {
-        ID         string
-        RemoteAddr string
-        Hostname   string
-        Session    *yamux.Session
-        CtrlStream net.Conn
-        Conn       net.Conn
-        Active     bool
+        ID            string
+        RemoteAddr    string
+        Hostname      string
+        Session       *yamux.Session
+        CtrlStream    net.Conn
+        Conn          net.Conn
+        ActiveTunName string
+        ActiveRoute   string
+        TunnelActive  bool
+        mu            sync.Mutex
 }
 
 var (
@@ -88,10 +93,36 @@ func setupTun(name string, ipAddr string) *water.Interface {
         return ifce
 }
 
+func cleanupAllRoutes() {
+        sessionsMu.Lock()
+        defer sessionsMu.Unlock()
+        for _, sess := range sessions {
+                sess.mu.Lock()
+                if sess.ActiveRoute != "" && sess.ActiveTunName != "" {
+                        exec.Command("ip", "route", "del", sess.ActiveRoute, "dev", sess.ActiveTunName).Run()
+                        fmt.Printf("[*] Rota removida do kernel: %s via %s\n", sess.ActiveRoute, sess.ActiveTunName)
+                }
+                sess.mu.Unlock()
+        }
+}
+
+func setupSigHandler() {
+        sigChan := make(chan os.Signal, 1)
+        signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+        go func() {
+                <-sigChan
+                fmt.Println("\n[*] Sinal de encerramento recebido. Limpando rotas e encerrando Banshee...")
+                cleanupAllRoutes()
+                os.Exit(0)
+        }()
+}
+
 func main() {
         listenIP := flag.String("ip", "0.0.0.0", "Endereço IP para escutar")
         listenPort := flag.String("port", "8080", "Porta para escutar conexões")
         flag.Parse()
+
+        setupSigHandler()
 
         cert, err := generateRealisticCert()
         if err != nil {
@@ -117,7 +148,7 @@ func main() {
         ██╔══██╗██╔══██║██║╚██╗██║╚════██║██╔══██║██╔══╝  ██╔══╝  
         ██████╔╝██║  ██║██║ ╚████║███████║██║  ██║███████╗███████╗
         `)
-        fmt.Printf("[*] Banshee Tunneling Framework ouvindo em %s...\n", bindAddr)
+        fmt.Printf("[*] Banshee Pivoting/Port Forwarding Framework ouvindo em %s...\n", bindAddr)
 
         go func() {
                 for {
@@ -148,19 +179,48 @@ func main() {
 
                         id := fmt.Sprintf("%d", time.Now().Unix()%10000)
 
-                        sessionsMu.Lock()
-                        sessions[id] = &AgentSession{
+                        sess := &AgentSession{
                                 ID:         id,
                                 RemoteAddr: conn.RemoteAddr().String(),
                                 Hostname:   hostname,
                                 Session:    session,
                                 CtrlStream: ctrlStream,
                                 Conn:       conn,
-                                Active:     true,
                         }
+
+                        sessionsMu.Lock()
+                        sessions[id] = sess
                         sessionsMu.Unlock()
 
                         fmt.Printf("\n[+] Agent joined: id=%s name=%s remote=%s\nbanshee » ", id, hostname, conn.RemoteAddr().String())
+
+
+                        go func(s *AgentSession) {
+                                ticker := time.NewTicker(10 * time.Second)
+                                defer ticker.Stop()
+                                for range ticker.C {
+                                        s.CtrlStream.SetWriteDeadline(time.Now().Add(3 * time.Second))
+                                        _, err := s.CtrlStream.Write([]byte("ping\n"))
+                                        s.CtrlStream.SetWriteDeadline(time.Time{})
+                                        if err != nil {
+                                                sessionsMu.Lock()
+                                                s.mu.Lock()
+                                                if s.ActiveRoute != "" && s.ActiveTunName != "" {
+                                                        exec.Command("ip", "route", "del", s.ActiveRoute, "dev", s.ActiveTunName).Run()
+                                                }
+                                                s.mu.Unlock()
+                                                s.Session.Close()
+                                                s.Conn.Close()
+                                                delete(sessions, s.ID)
+                                                if currentID == s.ID {
+                                                        currentID = ""
+                                                }
+                                                sessionsMu.Unlock()
+                                                fmt.Printf("\n[-] Agent %s (%s) desconectado por timeout.\nbanshee » ", s.ID, s.Hostname)
+                                                return
+                                        }
+                                }
+                        }(sess)
                 }
         }()
 
@@ -174,7 +234,13 @@ func main() {
                         currentID = ""
                         fmt.Print("banshee » ")
                 } else {
-                        fmt.Printf("[Agent : %s] » ", sess.Hostname)
+                        sess.mu.Lock()
+                        tunnelStatus := "OFF"
+                        if sess.TunnelActive {
+                                tunnelStatus = fmt.Sprintf("TUN:%s", sess.ActiveRoute)
+                        }
+                        sess.mu.Unlock()
+                        fmt.Printf("[Agent : %s | %s] » ", sess.Hostname, tunnelStatus)
                 }
 
                 line, err := reader.ReadString('\n')
@@ -190,10 +256,16 @@ func main() {
                 switch parts[0] {
                 case "sessions", "session":
                         sessionsMu.Lock()
-                        fmt.Println("\nID   | HOSTNAME       | ENDEREÇO IP")
-                        fmt.Println("---------------------------------------")
+                        fmt.Println("\nID   | HOSTNAME       | ENDEREÇO IP         | TÚNEIS ATIVOS")
+                        fmt.Println("-------------------------------------------------------------")
                         for id, s := range sessions {
-                                fmt.Printf("%-4s | %-14s | %s\n", id, s.Hostname, s.RemoteAddr)
+                                s.mu.Lock()
+                                route := s.ActiveRoute
+                                if route == "" {
+                                        route = "Nenhum"
+                                }
+                                s.mu.Unlock()
+                                fmt.Printf("%-4s | %-14s | %-19s | %s\n", id, s.Hostname, s.RemoteAddr, route)
                         }
                         fmt.Println()
                         sessionsMu.Unlock()
@@ -234,11 +306,19 @@ func main() {
                                 continue
                         }
 
+                        sess.mu.Lock()
+                        if sess.TunnelActive {
+                                sess.mu.Unlock()
+                                fmt.Println("[-] Já existe um túnel L3 ativo nesta sessão. Use 'stoptunnel' para encerrá-lo antes de abrir outro.")
+                                continue
+                        }
+                        sess.mu.Unlock()
+
                         sess.CtrlStream.Write([]byte("autoroute\n"))
                         respBuf := make([]byte, 2048)
                         sess.CtrlStream.SetReadDeadline(time.Now().Add(2 * time.Second))
                         n, err := sess.CtrlStream.Read(respBuf)
-                        sess.CtrlStream.SetReadDeadline(time.Time{})
+                        sess.CtrlStream.SetReadDeadline(time.Time{}) 
                         if err != nil || n == 0 {
                                 fmt.Println("[-] Erro ao obter rotas do agente.")
                                 continue
@@ -268,6 +348,15 @@ func main() {
                         }
 
                         selectedRoute := routes[choice-1]
+
+                        fmt.Print("? Start the tunnel? (y/N) ")
+                        confirm, _ := reader.ReadString('\n')
+                        confirm = strings.TrimSpace(strings.ToLower(confirm))
+                        if confirm != "y" && confirm != "yes" {
+                                fmt.Println("[*] Túnel cancelado.")
+                                continue
+                        }
+
                         tunName := fmt.Sprintf("banshee%d", time.Now().Unix()%1000)
                         fmt.Printf("[*] Usando nome de interface: %s\n", tunName)
 
@@ -276,75 +365,101 @@ func main() {
                                 fmt.Printf("[-] Erro ao abrir stream de túnel: %v\n", err)
                                 continue
                         }
-                        defer tunStream.Close()
 
                         ifce := setupTun(tunName, "10.10.10.1/24")
-                        defer ifce.Close()
 
                         fmt.Printf("[*] Criando rota para %s via %s...\n", selectedRoute, tunName)
                         exec.Command("ip", "route", "add", selectedRoute, "dev", tunName).Run()
 
-                        fmt.Print("? Start the tunnel? (y/N) ")
-                        confirm, _ := reader.ReadString('\n')
-                        confirm = strings.TrimSpace(strings.ToLower(confirm))
-                        if confirm != "y" && confirm != "yes" {
-                                fmt.Println("[*] Túnel cancelado.")
-                                exec.Command("ip", "route", "del", selectedRoute, "dev", tunName).Run()
-                                continue
-                        }
+                        sess.mu.Lock()
+                        sess.ActiveTunName = tunName
+                        sess.ActiveRoute = selectedRoute
+                        sess.TunnelActive = true
+                        sess.mu.Unlock()
 
-                        fmt.Println("[+] Túnel L3 ativo! Pressione Ctrl+C ou feche para encerrar.")
+                        fmt.Println("[+] Túnel L3 ativo em background! Você pode continuar navegando e interagir com outras sessões.")
 
-                        go func() {
-                                buf := make([]byte, 2048)
+                        go func(s *AgentSession, ifc *water.Interface, stream net.Conn, tName, route string) {
+                                defer stream.Close()
+                                defer ifc.Close()
+
+                                go func() {
+                                        buf := make([]byte, 2048)
+                                        for {
+                                                n, err := ifc.Read(buf)
+                                                if err != nil {
+                                                        break
+                                                }
+                                                if n > 0 {
+                                                        pktLen := n
+                                                        lenBuf := []byte{byte(pktLen >> 8), byte(pktLen & 0xff)}
+                                                        stream.Write(lenBuf)
+                                                        stream.Write(buf[:pktLen])
+                                                }
+                                        }
+                                }()
+
+                                lenBuf := make([]byte, 2)
                                 for {
-                                        n, err := ifce.Read(buf)
+                                        _, err := io.ReadFull(stream, lenBuf)
                                         if err != nil {
                                                 break
                                         }
-                                        if n > 0 {
-                                                pktLen := n
-                                                lenBuf := []byte{byte(pktLen >> 8), byte(pktLen & 0xff)}
-                                                tunStream.Write(lenBuf)
-                                                tunStream.Write(buf[:pktLen])
+                                        pktLen := int(lenBuf[0])<<8 | int(lenBuf[1])
+                                        if pktLen <= 0 || pktLen > 2000 {
+                                                break
                                         }
+                                        pktBuf := make([]byte, pktLen)
+                                        _, err = io.ReadFull(stream, pktBuf)
+                                        if err != nil {
+                                                break
+                                        }
+                                        ifc.Write(pktBuf)
                                 }
-                        }()
 
-                        lenBuf := make([]byte, 2)
-                        for {
-                                _, err := io.ReadFull(tunStream, lenBuf)
-                                if err != nil {
-                                        break
-                                }
-                                pktLen := int(lenBuf[0])<<8 | int(lenBuf[1])
-                                if pktLen <= 0 || pktLen > 2000 {
-                                        break
-                                }
-                                pktBuf := make([]byte, pktLen)
-                                _, err = io.ReadFull(tunStream, pktBuf)
-                                if err != nil {
-                                        break
-                                }
-                                ifce.Write(pktBuf)
+                                exec.Command("ip", "route", "del", route, "dev", tName).Run()
+                                s.mu.Lock()
+                                s.ActiveTunName = ""
+                                s.ActiveRoute = ""
+                                s.TunnelActive = false
+                                s.mu.Unlock()
+                                fmt.Printf("\n[-] Túnel L3 da sessão %s encerrado.\nbanshee » ", s.ID)
+                        }(sess, ifce, tunStream, tunName, selectedRoute)
+
+                case "stoptunnel":
+                        if !inSession {
+                                fmt.Println("[-] Execute dentro de uma sessão (use <ID>)")
+                                continue
                         }
-                        exec.Command("ip", "route", "del", selectedRoute, "dev", tunName).Run()
-                        fmt.Println("[-] Túnel L3 encerrado.")
+                        sess.mu.Lock()
+                        if !sess.TunnelActive {
+                                sess.mu.Unlock()
+                                fmt.Println("[-] Nenhum túnel ativo nesta sessão.")
+                                continue
+                        }
+                        exec.Command("ip", "route", "del", sess.ActiveRoute, "dev", sess.ActiveTunName).Run()
+                        sess.TunnelActive = false
+                        sess.ActiveRoute = ""
+                        sess.ActiveTunName = ""
+                        sess.mu.Unlock()
+                        fmt.Println("[*] Túnel encerrado manualmente.")
 
                 case "exit", "quit":
                         fmt.Println("Saindo...")
+                        cleanupAllRoutes()
                         os.Exit(0)
 
                 case "help":
                         if !inSession {
                                 fmt.Println("Comandos disponíveis:")
-                                fmt.Println("  sessions             - Lista todas as sessões ativas")
+                                fmt.Println("  sessions             - Lista todas as sessões ativas e túneis")
                                 fmt.Println("  use <ID>             - Seleciona uma sessão para interagir")
-                                fmt.Println("  exit                 - Encerra o controlador")
+                                fmt.Println("  exit                 - Encerra o controlador e limpa rotas")
                         } else {
                                 fmt.Println("Comandos da Sessão:")
                                 fmt.Println("  ifconfig             - Lista as interfaces de rede da máquina alvo")
-                                fmt.Println("  autoroute            - Descoberta interativa de rotas e subnets")
+                                fmt.Println("  autoroute            - Abre túnel L3 em background para a sub-rede")
+                                fmt.Println("  stoptunnel           - Encerra o túnel L3 atual da sessão")
                                 fmt.Println("  background           - Retorna ao menu principal")
                         }
                 default:
