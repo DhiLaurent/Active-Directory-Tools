@@ -19,8 +19,9 @@ func runCmd(name string, args ...string) {
 }
 
 func main() {
-	fmt.Println("[*] Verificando e baixando dependências...")
+	fmt.Println("[*] Baixando e organizando dependências...")
 	runCmd("go", "mod", "download")
+	runCmd("go", "mod", "tidy")
 
 	fmt.Println("[*] Limpando diretório bin/...")
 	_ = os.RemoveAll("bin")
