@@ -1,24 +1,14 @@
-.PHONY: all controller agent-linux agent-windows clean
-
-all: controller agent-linux agent-windows
-        @echo ""
-        @echo "[+] Sucesso! Todos os binários foram gerados na pasta bin/:"
-        @echo "    ├── bin/controller     (Controlador Linux)"
-        @echo "    ├── bin/agent          (Agente Linux)"
-        @echo "    └── bin/agent.exe      (Agente Windows)"
-
-controller:
-        @echo "[*] Compilando Controlador (Linux)..."
-        go build -o bin/controller ./cmd/controller/main.go
-
-agent-linux:
-        @echo "[*] Compilando Agente (Linux)..."
-        go build -o bin/agent ./cmd/agent/main.go
-
-agent-windows:
-        @echo "[*] Compilando Agente (Windows .exe)..."
-        GOOS=windows GOARCH=amd64 go build -ldflags="-H windowsgui" -o bin/agent.exe ./cmd/agent/main.go
+all: clean build
 
 clean:
         @echo "[*] Limpando diretório bin/..."
-        rm -rf bin/*
+        @rm -rf bin/*
+
+build:
+        @echo "[*] Compilando Controlador (Linux)..."
+        go build -o bin/controller ./cmd/controller/main.go
+        @echo "[*] Compilando Agente (Linux)..."
+        GOOS=linux GOARCH=amd64 go build -o bin/agent ./cmd/agent
+        @echo "[*] Compilando Agente (Windows)..."
+        GOOS=windows GOARCH=amd64 go build -o bin/agent.exe ./cmd/agent
+        @echo "[+] Build concluído com sucesso!"
