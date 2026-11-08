@@ -1,6 +1,1 @@
-github.com/hashicorp/yamux v0.1.1 h1:wTgjY2H75j2sYn2w/W4q13iU4D9D+3N6w+E65K7n4W4=
-github.com/hashicorp/yamux v0.1.1/go.mod h1:T/WqV1QfQyZt7xVj8Qh4Q0S2d48=
-github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8 h1:V0d4aN14uPq747LdKq1Kz1I4/eE7a4E4A2K9Zl2vM0=
-github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8/go.mod h1:1p1J+8c3kZ7NqJ5mJ6v8pW+N2a+d7a9C6vF5W4E=
-golang.org/x/sys v0.49.0 h1:a2VwB3900A0Yv8V9a9pX2p+Xp0W+3b0l921b7w+E65K=
-golang.org/x/sys v0.49.0/go.mod h1:oPxFTIjPoImjFYC2MmCZOEWhU9vgi8qgaRMVlkpx9g0=
+github.com/hashicorp/yamux v0.1.1/go.mod h1:CtWFDAQgb7dxtzFs4tWbplKIe2jSi3+5vKbgIO0SLnQ=
