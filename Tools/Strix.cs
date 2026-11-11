@@ -80,7 +80,7 @@ namespace Strix
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("==================================================");
-            Console.WriteLine("        Strix - Stealth ADSI (Full Suite)         ");
+            Console.WriteLine("        Strix -  ADSI based Tool                  ");
             Console.WriteLine("==================================================");
             Console.ResetColor();
             Console.WriteLine("Modos de uso disponiveis:");
