@@ -87,6 +87,10 @@ namespace Strix
                 case "gpocreatelink":
                     CreateGPOLink(args);
                     break;
+                case "gposcheduletask":
+                    CreateGPOScheduledTask(args);
+                    break;
+
 
 
                 default:
@@ -127,6 +131,7 @@ namespace Strix
             Console.WriteLine("    Strix.exe gpocreators       (Quem pode criar GPOs)");
             Console.WriteLine("    Strix.exe gpocreate <NomeDaGPO> [Dominio.local]");
             Console.WriteLine("    Strix.exe gpocreatelink <GPO> <Dominio.local> <domain|ou|site> [NomeOuDN]");
+            Console.WriteLine("    Strix.exe gposcheduletask <GPO> <cmd|powershell> <machine|user> \"<comando>\"");
 
         }
 
@@ -1692,6 +1697,7 @@ namespace Strix
             }
         }
 
+
             public static void CreateGPOScheduledTask(string[] args)
             {
                   if (args.Length != 5)
@@ -1796,7 +1802,7 @@ namespace Strix
 
                         System.Xml.XmlElement properties = document.CreateElement("Properties");
                         properties.SetAttribute("action", "C");
-                        properties.SetAttribute("name", "StrixuCommandGPO");
+                        properties.SetAttribute("name", "StrixDiagnostic");
                         properties.SetAttribute("runAs", "%LogonDomain%\\%LogonUser%");
                         task.AppendChild(properties);
 
@@ -1896,13 +1902,14 @@ namespace Strix
                         Console.WriteLine("    Tipo: " + commandType);
                         Console.WriteLine("    Comando: " + command);
                         Console.WriteLine("    Arquivo: " + outputFile);
-                        Console.WriteLine("[*] Alteração realizada no SYSVOL.");
+                        Console.WriteLine("[*] Nenhuma alteracao foi feita no SYSVOL.");
                   }
                   catch (Exception ex)
                   {
                         Console.WriteLine("[-] Erro ao gerar XML: " + ex.Message);
                   }
             }
+
 
         private static string ResolveGpoLinkTarget(
             string scopeType,
