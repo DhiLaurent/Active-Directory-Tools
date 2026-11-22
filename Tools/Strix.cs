@@ -3,6 +3,8 @@ using System.DirectoryServices;
 using System.Security.Principal;
 using System.Security.AccessControl;
 using System.Threading;
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 namespace Strix
 {
@@ -69,6 +71,15 @@ namespace Strix
                 case "writeablegpos":
                     FindWriteableGPOs();
                     break;
+                case "gpolinks":
+                    FindGPOLinks();
+                    break;
+                case "gplinkpermissions":
+                    FindGPLinkPermissions();
+                    break;
+                case "gpocreators":
+                    FindGPOCreators();
+                    break;
                 default:
                     PrintColored(String.Format("[-] Acao desconhecida: {0}", action), ConsoleColor.Red);
                     PrintBanner();
@@ -102,6 +113,9 @@ namespace Strix
             Console.WriteLine("  GPOs (Group Policies):");
             Console.WriteLine("    Strix.exe gpos          (Listar todas as GPOs)");
             Console.WriteLine("    Strix.exe writeablegpos (GPOs com permissoes nao-padrao)");
+            Console.WriteLine("    Strix.exe gpolinks          (Onde as GPOs estao vinculadas)");
+            Console.WriteLine("    Strix.exe gplinkpermissions (Quem pode vincular GPOs)");
+            Console.WriteLine("    Strix.exe gpocreators       (Quem pode criar GPOs)");
         }
 
         private static void PrintColored(string text, ConsoleColor color)
@@ -185,7 +199,7 @@ namespace Strix
                     {
                         string sam = result.Properties["sAMAccountName"][0].ToString();
                         string desc = result.Properties["description"].Count > 0 ? result.Properties["description"][0].ToString() : "";
-                        
+
                         if (!string.IsNullOrEmpty(desc))
                             Console.WriteLine(String.Format("    [+] {0,-20} | Desc: {1}", sam, desc));
                         else
@@ -218,7 +232,7 @@ namespace Strix
                     {
                         string name = result.Properties["name"][0].ToString();
                         string os = result.Properties["operatingSystem"].Count > 0 ? result.Properties["operatingSystem"][0].ToString() : "N/A";
-                        
+
                         Console.WriteLine(String.Format("    [+] Host: {0,-20} | OS: {1}", name, os));
                         count++;
                     }
@@ -392,13 +406,13 @@ namespace Strix
                                     string accessorSid = adRule.IdentityReference.Value;
                                     if (accessorSid == targetSid || accessorSid == "S-1-5-10") continue;
 
-                                    if (accessorSid == "S-1-5-18" || 
-                                        accessorSid == "S-1-5-32-544" || 
-                                        accessorSid.EndsWith("-512") || 
-                                        accessorSid.EndsWith("-519") || 
-                                        accessorSid.EndsWith("-518") || 
-                                        accessorSid.EndsWith("-544") || 
-                                        accessorSid.EndsWith("-548")) 
+                                    if (accessorSid == "S-1-5-18" ||
+                                        accessorSid == "S-1-5-32-544" ||
+                                        accessorSid.EndsWith("-512") ||
+                                        accessorSid.EndsWith("-519") ||
+                                        accessorSid.EndsWith("-518") ||
+                                        accessorSid.EndsWith("-544") ||
+                                        accessorSid.EndsWith("-548"))
                                     {
                                         continue;
                                     }
@@ -413,9 +427,9 @@ namespace Strix
                                     if (isDangerous)
                                     {
                                         string accessorName = ResolveSidToName(accessorSid);
-                                        string msg = String.Format("    [!] ACL Perigosa Explicita! Alvo: {0} <-- Permissao: [{1}] concedida para: {2} ({3})", 
+                                        string msg = String.Format("    [!] ACL Perigosa Explicita! Alvo: {0} <-- Permissao: [{1}] concedida para: {2} ({3})",
                                             targetName, rights, accessorName, accessorSid);
-                                        
+
                                         Console.WriteLine(msg);
                                         findings++;
                                     }
@@ -461,9 +475,9 @@ namespace Strix
                             {
                                 if (!memberSid.StartsWith(currentDomainSid))
                                 {
-                                    string msg = String.Format("    [!] Foreign Principal detectado no grupo '{0}': {1} (SID: {2})", 
+                                    string msg = String.Format("    [!] Foreign Principal detectado no grupo '{0}': {1} (SID: {2})",
                                         groupName, memberDnStr, memberSid);
-                                    
+
                                     Console.WriteLine(msg);
                                     foreignCount++;
                                 }
@@ -478,7 +492,6 @@ namespace Strix
                 PrintColored(String.Format("[-] Erro ao buscar Foreign Principals: {0}", ex.Message), ConsoleColor.Red);
             }
         }
-
 
         public static void FindKerberoastable()
         {
@@ -558,7 +571,7 @@ namespace Strix
                     {
                         string name = res.Properties["sAMAccountName"].Count > 0 ? res.Properties["sAMAccountName"][0].ToString() : "N/A";
                         string os = res.Properties["operatingSystem"].Count > 0 ? res.Properties["operatingSystem"][0].ToString() : "N/A";
-                        
+
                         Console.WriteLine(String.Format("    [!] Unconstrained Host/User: {0,-20} | OS: {1}", name, os));
                         uncCount++;
                     }
@@ -579,12 +592,12 @@ namespace Strix
                     {
                         string name = res.Properties["sAMAccountName"].Count > 0 ? res.Properties["sAMAccountName"][0].ToString() : "N/A";
                         int uac = res.Properties["userAccountControl"].Count > 0 ? Convert.ToInt32(res.Properties["userAccountControl"][0]) : 0;
-                        
+
                         bool protocolTransition = (uac & 16777216) != 0;
                         string delegationType = protocolTransition ? "Constrained w/ Protocol Transition" : "Constrained (Kerberos Only)";
 
                         Console.WriteLine(String.Format("    [!] Alvo: {0} | Tipo: [{1}]", name, delegationType));
-                        
+
                         if (res.Properties["msDS-AllowedToDelegateTo"].Count > 0)
                         {
                             foreach (var targetSpn in res.Properties["msDS-AllowedToDelegateTo"])
@@ -625,7 +638,7 @@ namespace Strix
                                         SecurityIdentifier accessorSid = commonAce.SecurityIdentifier;
                                         string accessorName = ResolveSidToName(accessorSid.Value);
 
-                                        Console.WriteLine(String.Format("        └── Concedido para: {0} ({1})", 
+                                        Console.WriteLine(String.Format("        └── Concedido para: {0} ({1})",
                                             accessorName, accessorSid.Value));
                                     }
                                 }
@@ -719,21 +732,20 @@ namespace Strix
                                     string accessorSid = adRule.IdentityReference.Value;
 
                                     // Ignora contas padrão, Built-ins de alto privilégio e CREATOR OWNER (S-1-3-0)
-                                    if (accessorSid == "S-1-3-0" || // CREATOR OWNER
-                                        accessorSid == "S-1-5-18" || // SYSTEM
-                                        accessorSid == "S-1-5-32-544" || // Administrators
-                                        accessorSid == "S-1-5-10" || // SELF
-                                        accessorSid.EndsWith("-512") || // Domain Admins
-                                        accessorSid.EndsWith("-519") || // Enterprise Admins
-                                        accessorSid.EndsWith("-518") || // Schema Admins
+                                    if (accessorSid == "S-1-3-0" ||
+                                        accessorSid == "S-1-5-18" ||
+                                        accessorSid == "S-1-5-32-544" ||
+                                        accessorSid == "S-1-5-10" ||
+                                        accessorSid.EndsWith("-512") ||
+                                        accessorSid.EndsWith("-519") ||
+                                        accessorSid.EndsWith("-518") ||
                                         accessorSid.EndsWith("-544"))
                                     {
                                         continue;
                                     }
 
                                     string rights = adRule.ActiveDirectoryRights.ToString();
-                                    
-                                    // Critério rigoroso para escrita em GPO: exige controle total ou alteração de DACL/Owner
+
                                     bool isWriteable = rights.Contains("GenericAll") ||
                                                        rights.Contains("WriteDacl") ||
                                                        rights.Contains("WriteOwner");
@@ -810,6 +822,577 @@ namespace Strix
             }
             catch { }
             return "";
+        }
+
+        public static void FindGPOLinks()
+        {
+            PrintColored("[*] Enumerando vinculos de GPO em Domain, Sites e OUs...", ConsoleColor.Yellow);
+
+            try
+            {
+                string defaultNC;
+                string configurationNC;
+                GetGpoNamingContexts(out defaultNC, out configurationNC);
+
+                Dictionary<string, string> gpoNames = GetGpoNameMap(defaultNC);
+                int totalLinks = 0;
+
+                EnumerateGpoScopes(defaultNC, configurationNC, delegate(SearchResult result, string scope)
+                {
+                    string gPLink = GetGpoProperty(result, "gPLink");
+                    if (String.IsNullOrEmpty(gPLink))
+                        return;
+
+                    string dn = GetGpoProperty(result, "distinguishedName");
+                    string scopeName = GetGpoProperty(result, "name");
+                    if (String.IsNullOrEmpty(scopeName))
+                        scopeName = dn;
+
+                    int gPOptions = GetGpoIntProperty(result, "gPOptions");
+                    bool blockInheritance = (gPOptions & 1) != 0;
+
+                    MatchCollection matches = Regex.Matches(
+                        gPLink,
+                        @"\[LDAP://(.*?);(\d+)\]",
+                        RegexOptions.IgnoreCase
+                    );
+
+                    if (matches.Count == 0)
+                        return;
+
+                    Console.WriteLine("\n[+] Escopo: " + scope);
+                    Console.WriteLine("    Nome: " + scopeName);
+                    Console.WriteLine("    DN: " + dn);
+
+                    if (scope != "Site")
+                        Console.WriteLine("    Block Inheritance: " + (blockInheritance ? "Yes" : "No"));
+
+                    int linkOrder = 0;
+
+                    foreach (Match match in matches)
+                    {
+                        linkOrder++;
+
+                        string gpoDN = match.Groups[1].Value;
+                        int options = Convert.ToInt32(match.Groups[2].Value);
+
+                        bool disabled = (options & 1) != 0;
+                        bool enforced = (options & 2) != 0;
+
+                        string guid = ExtractGpoGuid(gpoDN);
+                        string displayName = "Unknown GPO";
+
+                        if (!String.IsNullOrEmpty(guid) && gpoNames.ContainsKey(guid))
+                            displayName = gpoNames[guid];
+
+                        Console.WriteLine("\n    GPO: " + displayName);
+                        Console.WriteLine("    GUID: " + (guid ?? "Unknown"));
+                        Console.WriteLine("    Link Order: " + linkOrder);
+                        Console.WriteLine("    Link Status: " + (disabled ? "Disabled" : "Enabled"));
+                        Console.WriteLine("    Enforced: " + (enforced ? "Yes" : "No"));
+                        Console.WriteLine("    GPO DN: " + gpoDN);
+
+                        totalLinks++;
+                    }
+                });
+
+                PrintColored("[*] Total de vinculos encontrados: " + totalLinks, ConsoleColor.DarkGray);
+                Console.WriteLine("[*] Nota: os vinculos sao feitos em Domain, Sites e OUs; nao diretamente em usuarios ou computadores.");
+            }
+            catch (Exception ex)
+            {
+                PrintColored("[-] Erro ao enumerar GPO Links: " + ex.Message, ConsoleColor.Red);
+            }
+        }
+
+        private static bool HasAllRights(ActiveDirectoryRights actual, ActiveDirectoryRights requested)
+        {
+            return (actual & requested) == requested;
+        }
+
+        private static bool IsKnownAdministrativeSid(string sid)
+        {
+            if (String.IsNullOrEmpty(sid))
+                return false;
+
+            if (sid == "S-1-5-18" || sid == "S-1-5-19" || sid == "S-1-5-20" ||
+                sid == "S-1-5-32-544" || sid == "S-1-5-32-548" ||
+                sid == "S-1-5-32-549" || sid == "S-1-5-32-550" ||
+                sid == "S-1-5-32-551")
+                return true;
+
+            string domainSid = GetCurrentDomainSid();
+            if (!String.IsNullOrEmpty(domainSid) &&
+                sid.StartsWith(domainSid + "-", StringComparison.OrdinalIgnoreCase))
+            {
+                string rid = sid.Substring(domainSid.Length + 1);
+                return rid == "512" || rid == "516" || rid == "518" || rid == "519";
+            }
+
+            return false;
+        }
+
+        private static string EscapeSidForLdap(string sid)
+        {
+            SecurityIdentifier identifier = new SecurityIdentifier(sid);
+            byte[] bytes = new byte[identifier.BinaryLength];
+            identifier.GetBinaryForm(bytes, 0);
+
+            System.Text.StringBuilder escaped = new System.Text.StringBuilder();
+            foreach (byte value in bytes)
+                escaped.Append("\\").Append(value.ToString("X2"));
+
+            return escaped.ToString();
+        }
+
+        private static bool IsPrivilegedPrincipal(string sid)
+        {
+            if (IsKnownAdministrativeSid(sid))
+                return true;
+
+            try
+            {
+                using (DirectorySearcher searcher = new DirectorySearcher())
+                {
+                    searcher.Filter = "(objectSid=" + EscapeSidForLdap(sid) + ")";
+                    searcher.SearchScope = SearchScope.Subtree;
+                    searcher.PropertiesToLoad.Add("tokenGroups");
+
+                    SearchResult result = searcher.FindOne();
+                    if (result == null || result.Properties["tokenGroups"].Count == 0)
+                        return false;
+
+                    foreach (byte[] groupSidBytes in result.Properties["tokenGroups"])
+                    {
+                        string groupSid = new SecurityIdentifier(groupSidBytes, 0).Value;
+                        if (IsKnownAdministrativeSid(groupSid))
+                            return true;
+                    }
+                }
+            }
+            catch
+            {
+
+            }
+
+            return false;
+        }
+
+        public static void FindGPLinkPermissions()
+        {
+            PrintColored("[*] Enumerando permissoes para vincular GPOs...", ConsoleColor.Yellow);
+
+            try
+            {
+                string defaultNC;
+                string configurationNC;
+                GetGpoNamingContexts(out defaultNC, out configurationNC);
+
+                int allowFindings = 0;
+                int denyFindings = 0;
+
+                EnumerateGpoScopes(defaultNC, configurationNC, delegate(SearchResult result, string scope)
+                {
+                    string dn = GetGpoProperty(result, "distinguishedName");
+                    string name = GetGpoProperty(result, "name");
+
+                    using (DirectoryEntry entry = result.GetDirectoryEntry())
+                    {
+                        try
+                        {
+                            AuthorizationRuleCollection rules = entry.ObjectSecurity.GetAccessRules(
+                                true, true, typeof(SecurityIdentifier));
+
+                            foreach (AuthorizationRule rule in rules)
+                            {
+                                ActiveDirectoryAccessRule ace = rule as ActiveDirectoryAccessRule;
+                                if (ace == null)
+                                    continue;
+
+                                string sid = ace.IdentityReference.Value;
+
+                                if (sid == "S-1-3-0" || sid == "S-1-5-10" || IsPrivilegedPrincipal(sid))
+                                    continue;
+
+                                ActiveDirectoryRights rights = ace.ActiveDirectoryRights;
+
+                                bool genericAll = HasAllRights(rights, ActiveDirectoryRights.GenericAll);
+                                bool genericWrite = HasAllRights(rights, ActiveDirectoryRights.GenericWrite);
+                                bool writeProperty = HasAllRights(rights, ActiveDirectoryRights.WriteProperty);
+                                bool writeDacl = HasAllRights(rights, ActiveDirectoryRights.WriteDacl);
+                                bool writeOwner = HasAllRights(rights, ActiveDirectoryRights.WriteOwner);
+
+                                bool propertyAppliesToGplink =
+                                    ace.ObjectType == Guid.Empty || ace.ObjectType == GpoLinkAttributeGuid;
+
+                                bool directWrite = genericAll || genericWrite ||
+                                    (writeProperty && propertyAppliesToGplink);
+
+                                bool aclControl = writeDacl || writeOwner;
+
+                                if (!directWrite && !aclControl)
+                                    continue;
+
+                                string principal = ResolveSidToName(sid);
+                                string category = "";
+
+                                if (directWrite)
+                                    category = "Direct GPLink modification";
+
+                                if (aclControl)
+                                    category += (category.Length > 0 ? " + " : "") + "ACL/Owner control";
+
+                                Console.WriteLine();
+                                Console.WriteLine("    [{0}] {1}",
+                                    ace.AccessControlType == AccessControlType.Allow ? "!" : "-", category);
+                                Console.WriteLine("        Principal: {0}", principal);
+                                Console.WriteLine("        SID: {0}", sid);
+                                Console.WriteLine("        Scope: {0}", scope);
+                                Console.WriteLine("        Object: {0}", name);
+                                Console.WriteLine("        DN: {0}", dn);
+                                Console.WriteLine("        Rights: {0}", rights);
+                                Console.WriteLine("        ObjectType: {0}", ace.ObjectType);
+                                Console.WriteLine("        Inherited: {0}", ace.IsInherited ? "Yes" : "No");
+
+                                if (ace.AccessControlType == AccessControlType.Deny)
+                                {
+                                    Console.WriteLine("        [!] Deny ACE: avaliar junto das demais ACEs para determinar acesso efetivo.");
+                                    denyFindings++;
+                                }
+                                else
+                                {
+                                    if (directWrite)
+                                        Console.WriteLine("        [!] Pode alterar diretamente o atributo gPLink.");
+                                    if (aclControl)
+                                        Console.WriteLine("        [!] Controle indireto: pode modificar a DACL ou o Owner do escopo.");
+                                    allowFindings++;
+                                }
+                            }
+                        }
+                        catch (Exception exInner)
+                        {
+                            Console.WriteLine("    [-] Nao foi possivel ler a DACL de " + dn + ": " + exInner.Message);
+                        }
+                    }
+                });
+
+                PrintColored(String.Format(
+                    "[*] ACEs Allow relevantes: {0} | ACEs Deny relevantes: {1}",
+                    allowFindings, denyFindings), ConsoleColor.DarkGray);
+            }
+            catch (Exception ex)
+            {
+                PrintColored("[-] Erro ao enumerar permissoes de GPO Link: " + ex.Message, ConsoleColor.Red);
+            }
+        }
+
+        public static void FindGPOCreators()
+        {
+            PrintColored("[*] Enumerando permissoes para criar GPOs...", ConsoleColor.Yellow);
+
+            try
+            {
+                string defaultNC;
+                string configurationNC;
+                GetGpoNamingContexts(out defaultNC, out configurationNC);
+
+                string policiesDN = "CN=Policies,CN=System," + defaultNC;
+
+                Guid gpoClassGuid = GpoContainerClassGuid;
+
+                int allowFindings = 0;
+                int denyFindings = 0;
+
+                using (DirectoryEntry entry = new DirectoryEntry("LDAP://" + policiesDN))
+                {
+                    AuthorizationRuleCollection rules = entry.ObjectSecurity.GetAccessRules(
+                        true,
+                        true,
+                        typeof(SecurityIdentifier));
+
+                    foreach (AuthorizationRule rule in rules)
+                    {
+                        ActiveDirectoryAccessRule ace = rule as ActiveDirectoryAccessRule;
+
+                        if (ace == null)
+                            continue;
+
+                        string sid = ace.IdentityReference.Value;
+                        ActiveDirectoryRights rights = ace.ActiveDirectoryRights;
+
+                        bool createChild = HasAllRights(
+                            rights,
+                            ActiveDirectoryRights.CreateChild);
+
+                        bool genericAll = HasAllRights(
+                            rights,
+                            ActiveDirectoryRights.GenericAll);
+
+                        bool writeDacl = HasAllRights(
+                            rights,
+                            ActiveDirectoryRights.WriteDacl);
+
+                        bool writeOwner = HasAllRights(
+                            rights,
+                            ActiveDirectoryRights.WriteOwner);
+
+                        bool appliesToAllClasses = ace.ObjectType == Guid.Empty;
+                        bool appliesToGpoClass = ace.ObjectType == gpoClassGuid;
+
+                        bool canCreateGpo = createChild &&
+                            (appliesToAllClasses || appliesToGpoClass);
+
+                        bool canControlContainer = genericAll &&
+                            appliesToAllClasses;
+
+                        bool canModifyDacl = writeDacl &&
+                            appliesToAllClasses;
+
+                        bool canModifyOwner = writeOwner &&
+                            appliesToAllClasses;
+
+                        bool indirectControl = canModifyDacl || canModifyOwner;
+
+                        if (!canCreateGpo &&
+                            !canControlContainer &&
+                            !indirectControl)
+                        {
+                            continue;
+                        }
+
+                        string principal = ResolveSidToName(sid);
+
+                        Console.WriteLine();
+
+                        Console.WriteLine(
+                            "    [{0}] Permissao relevante no container de GPO",
+                            ace.AccessControlType == AccessControlType.Allow ? "!" : "-");
+
+                        Console.WriteLine("        Principal: {0}", principal);
+                        Console.WriteLine("        SID: {0}", sid);
+                        Console.WriteLine("        Container: CN=Policies,CN=System");
+                        Console.WriteLine("        DN: {0}", policiesDN);
+                        Console.WriteLine("        Rights: {0}", rights);
+                        Console.WriteLine("        ObjectType: {0}", ace.ObjectType);
+                        Console.WriteLine("        Inherited: {0}", ace.IsInherited ? "Yes" : "No");
+
+                        if (canCreateGpo)
+                        {
+                            Console.WriteLine("        Capability: Can Create GPO");
+
+                            if (appliesToAllClasses)
+                            {
+                                Console.WriteLine(
+                                    "        Scope: CreateChild applies to all child object classes");
+                            }
+                            else
+                            {
+                                Console.WriteLine(
+                                    "        Scope: CreateChild applies specifically to groupPolicyContainer");
+                            }
+                        }
+
+                        if (canControlContainer)
+                        {
+                            Console.WriteLine(
+                                "        Capability: GenericAll - Full Control on the Policies container");
+
+                            Console.WriteLine(
+                                "        [!] This broad permission includes the ability to create GPO child objects.");
+                        }
+
+                        if (canModifyDacl)
+                        {
+                            Console.WriteLine(
+                                "        Capability: WriteDacl - Can modify the container DACL");
+
+                            Console.WriteLine(
+                                "        [!] Indirect path: may allow granting CreateChild to another principal.");
+                        }
+
+                        if (canModifyOwner)
+                        {
+                            Console.WriteLine(
+                                "        Capability: WriteOwner - Can take ownership of the container");
+
+                            Console.WriteLine(
+                                "        [!] Indirect path: ownership may allow subsequent DACL modification.");
+                        }
+
+                        if (ace.AccessControlType == AccessControlType.Deny)
+                        {
+                            Console.WriteLine(
+                                "        [!] Deny ACE: avaliar junto das demais ACEs e do token do usuario.");
+
+                            denyFindings++;
+                        }
+                        else
+                        {
+                            if (canCreateGpo || canControlContainer)
+                            {
+                                Console.WriteLine(
+                                    "        [!] Permissao Allow relacionada a criacao de GPO identificada.");
+                            }
+
+                            if (indirectControl)
+                            {
+                                Console.WriteLine(
+                                    "        [!] Controle indireto identificado; nao confirma criacao direta de GPO.");
+                            }
+
+                            allowFindings++;
+                        }
+                    }
+                }
+
+                PrintColored(
+                    String.Format(
+                        "[*] ACEs Allow relevantes: {0} | ACEs Deny relevantes: {1}",
+                        allowFindings,
+                        denyFindings),
+                    ConsoleColor.DarkGray);
+
+                Console.WriteLine(
+                    "[*] Nota: a enumeracao identifica ACEs individuais; nao calcula o acesso efetivo combinando grupos, token e precedencia de Deny.");
+            }
+            catch (Exception ex)
+            {
+                PrintColored(
+                    "[-] Erro ao enumerar criadores de GPO: " + ex.Message,
+                    ConsoleColor.Red);
+            }
+        }
+
+        private static readonly Guid GpoLinkAttributeGuid =
+            new Guid("f30e3bbe-9ff0-11d1-b603-0000f80367c1");
+
+        private static readonly Guid GpoContainerClassGuid =
+            new Guid("f30e3bc2-9ff0-11d1-b603-0000f80367c1");
+
+        private static void GetGpoNamingContexts(out string defaultNC, out string configurationNC)
+        {
+            using (DirectoryEntry rootDse = new DirectoryEntry("LDAP://RootDSE"))
+            {
+                defaultNC = rootDse.Properties["defaultNamingContext"].Value.ToString();
+                configurationNC = rootDse.Properties["configurationNamingContext"].Value.ToString();
+            }
+        }
+
+        private static Dictionary<string, string> GetGpoNameMap(string defaultNC)
+        {
+            Dictionary<string, string> names =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            string policiesDN = "CN=Policies,CN=System," + defaultNC;
+
+            using (DirectoryEntry root = new DirectoryEntry("LDAP://" + policiesDN))
+            using (DirectorySearcher searcher = new DirectorySearcher(root))
+            {
+                searcher.Filter = "(objectClass=groupPolicyContainer)";
+                searcher.SearchScope = SearchScope.Subtree;
+                searcher.PageSize = 500;
+                searcher.PropertiesToLoad.Add("name");
+                searcher.PropertiesToLoad.Add("displayName");
+
+                using (SearchResultCollection results = searcher.FindAll())
+                {
+                    foreach (SearchResult result in results)
+                    {
+                        string guid = GetGpoProperty(result, "name").Trim('{', '}');
+                        string displayName = GetGpoProperty(result, "displayName");
+
+                        if (!String.IsNullOrEmpty(guid))
+                            names[guid] = String.IsNullOrEmpty(displayName) ? guid : displayName;
+                    }
+                }
+            }
+
+            return names;
+        }
+
+        private static void EnumerateGpoScopes(
+            string defaultNC,
+            string configurationNC,
+            Action<SearchResult, string> callback)
+        {
+            using (DirectoryEntry root = new DirectoryEntry("LDAP://" + defaultNC))
+            using (DirectorySearcher searcher = new DirectorySearcher(root))
+            {
+                searcher.Filter = "(objectCategory=domainDNS)";
+                searcher.SearchScope = SearchScope.Base;
+                searcher.PageSize = 500;
+                AddGpoScopeProperties(searcher);
+
+                using (SearchResultCollection results = searcher.FindAll())
+                {
+                    foreach (SearchResult result in results)
+                        callback(result, "Domain");
+                }
+            }
+
+            string sitesDN = "CN=Sites," + configurationNC;
+
+            using (DirectoryEntry root = new DirectoryEntry("LDAP://" + sitesDN))
+            using (DirectorySearcher searcher = new DirectorySearcher(root))
+            {
+                searcher.Filter = "(objectCategory=site)";
+                searcher.SearchScope = SearchScope.Subtree;
+                searcher.PageSize = 500;
+                AddGpoScopeProperties(searcher);
+
+                using (SearchResultCollection results = searcher.FindAll())
+                {
+                    foreach (SearchResult result in results)
+                        callback(result, "Site");
+                }
+            }
+
+            using (DirectoryEntry root = new DirectoryEntry("LDAP://" + defaultNC))
+            using (DirectorySearcher searcher = new DirectorySearcher(root))
+            {
+                searcher.Filter = "(objectCategory=organizationalUnit)";
+                searcher.SearchScope = SearchScope.Subtree;
+                searcher.PageSize = 500;
+                AddGpoScopeProperties(searcher);
+
+                using (SearchResultCollection results = searcher.FindAll())
+                {
+                    foreach (SearchResult result in results)
+                        callback(result, "OU");
+                }
+            }
+        }
+
+        private static void AddGpoScopeProperties(DirectorySearcher searcher)
+        {
+            searcher.PropertiesToLoad.Add("distinguishedName");
+            searcher.PropertiesToLoad.Add("name");
+            searcher.PropertiesToLoad.Add("gPLink");
+            searcher.PropertiesToLoad.Add("gPOptions");
+        }
+
+        private static string GetGpoProperty(SearchResult result, string property)
+        {
+            if (!result.Properties.Contains(property) || result.Properties[property].Count == 0)
+                return "";
+
+            return result.Properties[property][0].ToString();
+        }
+
+        private static int GetGpoIntProperty(SearchResult result, string property)
+        {
+            int value;
+            return Int32.TryParse(GetGpoProperty(result, property), out value) ? value : 0;
+        }
+
+        private static string ExtractGpoGuid(string dn)
+        {
+            Match match = Regex.Match(
+                dn,
+                @"\{?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}?"
+            );
+
+            return match.Success ? match.Groups[1].Value : null;
         }
     }
 }
