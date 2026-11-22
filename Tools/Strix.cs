@@ -1808,6 +1808,7 @@ namespace Strix
 
                         System.Xml.XmlElement scheduledTask = document.CreateElement("Task");
                         scheduledTask.SetAttribute("version", "1.2");
+                        scheduledTask.SetAttribute("xmlns", "http://microsoft.com");
                         properties.AppendChild(scheduledTask);
 
                         System.Xml.XmlElement registration = document.CreateElement("RegistrationInfo");
@@ -1855,11 +1856,11 @@ namespace Strix
                         principals.AppendChild(principal);
 
                         System.Xml.XmlElement userId = document.CreateElement("UserId");
-                        userId.InnerText = "NT AUTHORITY\\SYSTEM";
+                        userId.InnerText = @"NT AUTHORITY\SYSTEM";
                         principal.AppendChild(userId);
 
                         System.Xml.XmlElement logonType = document.CreateElement("LogonType");
-                        logonType.InnerText = "InteractiveToken";
+                        logonType.InnerText = "ServiceAccount";
                         principal.AppendChild(logonType);
 
                         System.Xml.XmlElement runLevel = document.CreateElement("RunLevel");
