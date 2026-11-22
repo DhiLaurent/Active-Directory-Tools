@@ -466,7 +466,7 @@ namespace Strix
 
         public static void FindForeignPrincipals()
         {
-            PrintColored("[*] Cacando Foreign Principals...", ConsoleColor.Yellow);
+            PrintColored("[*] Enumerando Foreign Principals...", ConsoleColor.Yellow);
             try
             {
                 using (DirectorySearcher searcher = new DirectorySearcher())
