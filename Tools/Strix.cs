@@ -5,6 +5,7 @@ using System.Security.AccessControl;
 using System.Threading;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.DirectoryServices.ActiveDirectory;
 
 namespace Strix
 {
@@ -80,6 +81,14 @@ namespace Strix
                 case "gpocreators":
                     FindGPOCreators();
                     break;
+                case "gpocreate":
+                    CreateGPO(args);
+                    break;
+                case "gpocreatelink":
+                    CreateGPOLink(args);
+                    break;
+
+
                 default:
                     PrintColored(String.Format("[-] Acao desconhecida: {0}", action), ConsoleColor.Red);
                     PrintBanner();
@@ -116,6 +125,9 @@ namespace Strix
             Console.WriteLine("    Strix.exe gpolinks          (Onde as GPOs estao vinculadas)");
             Console.WriteLine("    Strix.exe gplinkpermissions (Quem pode vincular GPOs)");
             Console.WriteLine("    Strix.exe gpocreators       (Quem pode criar GPOs)");
+            Console.WriteLine("    Strix.exe gpocreate <NomeDaGPO> [Dominio.local]");
+            Console.WriteLine("    Strix.exe gpocreatelink <GPO> <Dominio.local> <domain|ou|site> [NomeOuDN]");
+
         }
 
         private static void PrintColored(string text, ConsoleColor color)
@@ -1393,6 +1405,364 @@ namespace Strix
             );
 
             return match.Success ? match.Groups[1].Value : null;
+        }
+
+
+        public static void CreateGPO(string[] args)
+        {
+            if (args.Length < 2 || args.Length > 3)
+            {
+                PrintColored("[-] Uso: Strix.exe gpocreate <NomeDaGPO> [Dominio.local]", ConsoleColor.Red);
+                return;
+            }
+
+            string gpoName = args[1].Trim();
+            string domain = args.Length == 3 ? args[2].Trim() : null;
+
+            if (String.IsNullOrWhiteSpace(gpoName))
+            {
+                PrintColored("[-] Informe um nome valido para a GPO.", ConsoleColor.Red);
+                return;
+            }
+
+            try
+            {
+                string defaultNC;
+                string configurationNC;
+                string server;
+
+                GetGpoDirectoryContext(domain, out defaultNC, out configurationNC, out server);
+
+                string script =
+                    "$ErrorActionPreference = 'Stop'; " +
+                    "try { " +
+                    "Import-Module GroupPolicy -ErrorAction Stop; " +
+                    "$gpo = New-GPO -Name " + EscapePowerShellString(gpoName) +
+                    " -Domain " + EscapePowerShellString(domain ?? GetDomainFromNamingContext(defaultNC)) +
+                    " -Server " + EscapePowerShellString(server) +
+                    " -ErrorAction Stop; " +
+                    "$gpo | Select-Object DisplayName, Id, GpoStatus | ConvertTo-Json -Compress; " +
+                    "exit 0; " +
+                    "} catch { " +
+                    "[Console]::Error.WriteLine($_.Exception.Message); " +
+                    "exit 1; " +
+                    "}";
+
+                PrintColored("[*] Criando GPO no dominio...", ConsoleColor.Yellow);
+                Console.WriteLine("    Nome: " + gpoName);
+                Console.WriteLine("    Dominio: " + GetDomainFromNamingContext(defaultNC));
+                Console.WriteLine("    Domain Controller: " + server);
+
+                string output;
+                string error;
+
+                bool success = ExecuteGroupPolicyPowerShell(script, out output, out error);
+
+                if (!success)
+                {
+                    PrintColored("[-] Falha ao criar GPO.", ConsoleColor.Red);
+
+                    if (!String.IsNullOrWhiteSpace(error))
+                        Console.WriteLine("    Erro: " + error);
+
+                    return;
+                }
+
+                PrintColored("[+] GPO criada com sucesso!", ConsoleColor.Green);
+                Console.WriteLine();
+                Console.WriteLine("    Resultado:");
+                Console.WriteLine("    " + output);
+            }
+            catch (Exception ex)
+            {
+                PrintColored("[-] Erro ao criar GPO: " + ex.Message, ConsoleColor.Red);
+            }
+        }
+
+        public static void CreateGPOLink(string[] args)
+        {
+            if (args.Length < 4 || args.Length > 5)
+            {
+                PrintColored(
+                    "[-] Uso: Strix.exe gpocreatelink <GPO> <Dominio.local> <domain|ou|site> [NomeOuDN]",
+                    ConsoleColor.Red);
+                return;
+            }
+
+            string gpoName = args[1].Trim();
+            string domain = args[2].Trim();
+            string scopeType = args[3].Trim().ToLower();
+            string targetName = args.Length == 5 ? args[4].Trim() : "";
+
+            if (String.IsNullOrWhiteSpace(gpoName) || String.IsNullOrWhiteSpace(domain))
+            {
+                PrintColored("[-] Nome da GPO e dominio sao obrigatorios.", ConsoleColor.Red);
+                return;
+            }
+
+            if (scopeType != "domain" && scopeType != "ou" && scopeType != "site")
+            {
+                PrintColored("[-] Tipo de destino invalido. Utilize domain, ou ou site.", ConsoleColor.Red);
+                return;
+            }
+
+            if (scopeType == "domain" && args.Length != 4)
+            {
+                PrintColored("[-] Para o escopo domain, nao informe um destino adicional.", ConsoleColor.Red);
+                return;
+            }
+
+            if (scopeType != "domain" && String.IsNullOrWhiteSpace(targetName))
+            {
+                PrintColored("[-] Informe o nome ou DN da OU/Site.", ConsoleColor.Red);
+                return;
+            }
+
+            try
+            {
+                string defaultNC;
+                string configurationNC;
+                string server;
+
+                GetGpoDirectoryContext(domain, out defaultNC, out configurationNC, out server);
+
+                string targetDN = ResolveGpoLinkTarget(
+                    scopeType,
+                    targetName,
+                    defaultNC,
+                    configurationNC,
+                    server);
+
+                if (String.IsNullOrEmpty(targetDN))
+                {
+                    PrintColored("[-] Nao foi possivel resolver o destino informado.", ConsoleColor.Red);
+                    return;
+                }
+
+                string script =
+                    "$ErrorActionPreference = 'Stop'; " +
+                    "try { " +
+                    "Import-Module GroupPolicy -ErrorAction Stop; " +
+                    "$link = New-GPLink " +
+                    "-Name " + EscapePowerShellString(gpoName) + " " +
+                    "-Target " + EscapePowerShellString(targetDN) + " " +
+                    "-Domain " + EscapePowerShellString(domain) + " " +
+                    "-Server " + EscapePowerShellString(server) + " " +
+                    "-LinkEnabled Yes " +
+                    "-ErrorAction Stop; " +
+                    "[PSCustomObject]@{ " +
+                    "DisplayName = $link.DisplayName; " +
+                    "GpoId = $link.GpoId; " +
+                    "Target = " + EscapePowerShellString(targetDN) + "; " +
+                    "LinkEnabled = 'Yes' " +
+                    "} | ConvertTo-Json -Compress; " +
+                    "exit 0; " +
+                    "} catch { " +
+                    "[Console]::Error.WriteLine($_.Exception.Message); " +
+                    "exit 1; " +
+                    "}";
+
+                PrintColored("[*] Criando vinculo de GPO...", ConsoleColor.Yellow);
+                Console.WriteLine("    GPO: " + gpoName);
+                Console.WriteLine("    Dominio: " + domain);
+                Console.WriteLine("    Escopo: " + scopeType);
+                Console.WriteLine("    Target DN: " + targetDN);
+                Console.WriteLine("    Domain Controller: " + server);
+
+                string output;
+                string error;
+
+                bool success = ExecuteGroupPolicyPowerShell(script, out output, out error);
+
+                if (!success)
+                {
+                    PrintColored("[-] Falha ao criar vinculo da GPO.", ConsoleColor.Red);
+
+                    if (!String.IsNullOrWhiteSpace(error))
+                        Console.WriteLine("    Erro: " + error);
+
+                    return;
+                }
+
+                PrintColored("[+] Vinculo criado com sucesso!", ConsoleColor.Green);
+                Console.WriteLine();
+                Console.WriteLine("    Resultado:");
+                Console.WriteLine("    " + output);
+            }
+            catch (Exception ex)
+            {
+                PrintColored("[-] Erro ao criar GPO Link: " + ex.Message, ConsoleColor.Red);
+            }
+        }
+
+
+
+        private static void GetGpoDirectoryContext(
+            string domain,
+            out string defaultNC,
+            out string configurationNC,
+            out string server)
+        {
+            string rootPath = String.IsNullOrWhiteSpace(domain)
+                ? "LDAP://RootDSE"
+                : "LDAP://" + domain + "/RootDSE";
+
+            using (DirectoryEntry rootDse = new DirectoryEntry(rootPath))
+            {
+                defaultNC = rootDse.Properties["defaultNamingContext"].Value.ToString();
+                configurationNC = rootDse.Properties["configurationNamingContext"].Value.ToString();
+                server = rootDse.Properties["dnsHostName"].Value.ToString();
+            }
+        }
+
+        private static string GetDomainFromNamingContext(string namingContext)
+        {
+            string[] parts = namingContext.Split(',');
+            List<string> domainParts = new List<string>();
+
+            foreach (string part in parts)
+            {
+                if (part.StartsWith("DC=", StringComparison.OrdinalIgnoreCase))
+                    domainParts.Add(part.Substring(3));
+            }
+
+            return String.Join(".", domainParts.ToArray());
+        }
+
+        private static string EscapePowerShellString(string value)
+        {
+            return "'" + value.Replace("'", "''") + "'";
+        }
+
+        private static string EscapeLdapFilterValue(string value)
+        {
+            return value.Replace("\\", "\\5c")
+                        .Replace("*", "\\2a")
+                        .Replace("(", "\\28")
+                        .Replace(")", "\\29")
+                        .Replace("\0", "\\00");
+        }
+
+        private static bool ExecuteGroupPolicyPowerShell(
+            string script,
+            out string output,
+            out string error)
+        {
+            output = "";
+            error = "";
+
+            string encodedScript = Convert.ToBase64String(
+                System.Text.Encoding.Unicode.GetBytes(script));
+
+            System.Diagnostics.ProcessStartInfo startInfo =
+                new System.Diagnostics.ProcessStartInfo();
+
+            startInfo.FileName = "powershell.exe";
+            startInfo.Arguments = "-NoProfile -NonInteractive -EncodedCommand " + encodedScript;
+            startInfo.UseShellExecute = false;
+            startInfo.CreateNoWindow = true;
+            startInfo.RedirectStandardOutput = true;
+            startInfo.RedirectStandardError = true;
+
+            using (System.Diagnostics.Process process =
+                new System.Diagnostics.Process())
+            {
+                process.StartInfo = startInfo;
+                process.Start();
+
+                output = process.StandardOutput.ReadToEnd();
+                error = process.StandardError.ReadToEnd();
+
+                process.WaitForExit();
+
+                return process.ExitCode == 0;
+            }
+        }
+
+        private static string DiscoverDomainController(string domain)
+        {
+            DirectoryContext context = new DirectoryContext(
+                DirectoryContextType.Domain,
+                domain);
+
+            using (Domain currentDomain = Domain.GetDomain(context))
+            using (DomainController controller = currentDomain.FindDomainController())
+            {
+                return controller.Name;
+            }
+        }
+
+        private static string ResolveGpoLinkTarget(
+            string scopeType,
+            string targetName,
+            string defaultNC,
+            string configurationNC,
+            string server)
+        {
+            if (scopeType == "domain")
+                return defaultNC;
+
+            string expectedClass = scopeType == "ou"
+                ? "organizationalUnit"
+                : "site";
+
+            if (String.IsNullOrWhiteSpace(targetName))
+                throw new ArgumentException("Destino nao informado.");
+
+            if (targetName.Contains("=") && targetName.Contains(","))
+            {
+                using (DirectoryEntry entry =
+                    new DirectoryEntry("LDAP://" + server + "/" + targetName))
+                {
+                    entry.RefreshCache(new string[] { "objectClass" });
+
+                    foreach (object objectClass in entry.Properties["objectClass"])
+                    {
+                        if (String.Equals(
+                            objectClass.ToString(),
+                            expectedClass,
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            return targetName;
+                        }
+                    }
+                }
+
+                throw new InvalidOperationException(
+                    "O DN informado nao corresponde ao tipo de escopo solicitado.");
+            }
+
+            string searchBase = scopeType == "ou"
+                ? defaultNC
+                : "CN=Sites," + configurationNC;
+
+            string filter =
+                "(&(objectClass=" + expectedClass + ")" +
+                "(name=" + EscapeLdapFilterValue(targetName) + "))";
+
+            using (DirectoryEntry root =
+                new DirectoryEntry("LDAP://" + server + "/" + searchBase))
+            using (DirectorySearcher searcher =
+                new DirectorySearcher(root))
+            {
+                searcher.Filter = filter;
+                searcher.SearchScope = SearchScope.Subtree;
+                searcher.PageSize = 100;
+                searcher.PropertiesToLoad.Add("distinguishedName");
+
+                using (SearchResultCollection results = searcher.FindAll())
+                {
+                    if (results.Count == 0)
+                        throw new InvalidOperationException(
+                            "Destino nao encontrado: " + targetName);
+
+                    if (results.Count > 1)
+                        throw new InvalidOperationException(
+                            "Mais de um destino encontrado. Informe o DN completo.");
+
+                    return results[0].Properties["distinguishedName"][0].ToString();
+                }
+            }
         }
     }
 }
