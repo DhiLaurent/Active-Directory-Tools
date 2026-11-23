@@ -1698,7 +1698,7 @@ namespace Strix
         }
 
 
-            public static void CreateGPOScheduledTask(string[] args)
+  public static void CreateGPOScheduledTask(string[] args)
             {
                 if (args.Length != 5)
                 {
@@ -1752,8 +1752,9 @@ namespace Strix
                             return;
                         }
 
-                        gpoGuid = result.Properties["name"].ToString();
-                        gpoFileSysPath = result.Properties["gPCFileSysPath"].ToString();
+                        gpoGuid = result.Properties["name"][0].ToString();
+                        gpoFileSysPath = result.Properties["gPCFileSysPath"][0].ToString();
+
                     }
 
                     string scopeDirectory = scope == "machine" ? "Machine" : "User";
@@ -1879,22 +1880,14 @@ namespace Strix
                         document.Save(writer);
                     }
 
-
                     Console.WriteLine("[+] ScheduledTasks.xml criado com sucesso em: " + outputFile);
-                    Console.WriteLine("    GPO: " + gpoName);
-                    Console.WriteLine("    GUID: " + gpoGuid);
-                    Console.WriteLine("    Escopo: " + scopeDirectory);
-                    Console.WriteLine("    Tipo: " + commandType);
-                    Console.WriteLine("    Comando: " + command);
-                    Console.WriteLine("    Arquivo: " + outputFile);
-                    Console.WriteLine("[*] Alteração realizada no SYSVOL.");                  
-
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine("[-] Erro ao criar GPO Scheduled Task: " + ex.Message);
                 }
             }
+
 
         private static string ResolveGpoLinkTarget(
             string scopeType,
