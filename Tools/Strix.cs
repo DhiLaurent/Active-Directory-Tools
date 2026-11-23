@@ -1706,10 +1706,11 @@ namespace Strix
                     return;
                 }
 
-                string gpoName = args;
-                string commandType = args.ToLower();
-                string scope = args.ToLower();
-                string command = args.Trim();
+                string gpoName = args[1];
+                string commandType = args[2].ToLower();
+                string scope = args[3].ToLower();
+                string command = args[4].Trim();
+
 
                 if (commandType != "cmd" && commandType != "powershell")
                 {
