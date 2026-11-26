@@ -131,7 +131,7 @@ namespace Strix
             Console.WriteLine("    Strix.exe gpocreators       (Quem pode criar GPOs)");
             Console.WriteLine("    Strix.exe gpocreate <NomeDaGPO> [Dominio.local]");
             Console.WriteLine("    Strix.exe gpocreatelink <GPO> <Dominio.local> <domain|ou|site> [NomeOuDN]");
-            Console.WriteLine("    Strix.exe gposcheduletask <GPO> <cmd|powershell> <machine|user> \"<comando>\"");
+            Console.WriteLine("    Strix.exe gposcheduletask <GPO> \"<comando>\"");
 
         }
 
